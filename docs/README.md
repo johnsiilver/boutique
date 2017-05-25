@@ -32,7 +32,7 @@ The first, running slower is because we must not only type assert at different p
 
 The second, runtime errors, happen when one of two events occur.  The type of data to be stored in Boutique is changed on a write.  The first data passed to the store is the only type that can be stored.  Any attempt to store a different type of data will be result in an error.  The second way is if the data being stored in Boutique is not a struct type.  The top level data must be a struct.  In a non-generic store, these would be caught by the compiler.  But these are easy to avoid.
 
-The third is more difficult.  Changes are routed through Actions.  The concepts take a bit to understand and you have to be careful to copy the data when updating the store's data.  This adds a certain amount of complexity, but changes to the store are easily readable from a readability perspective.
+The third is more difficult.  Changes are routed through Actions.  Actions trigger Updaters, which also must be written.  The concepts take a bit to understand and you have to be careful to copy the data and not mutate the data when writing Updaters.   tThis adds a certain amount of complexity, but changes to the store are easily readable from a readability perspective.
 
 ## Let's get started!
 
@@ -81,7 +81,7 @@ type Calculator struct {
 type Data struct {
     // Calculators stores all in flight calculations.
     Calculators map[string]Calculator
-    
+
     // Submitted is submitted calculations.
     Submitted []Calculator
 
@@ -132,8 +132,21 @@ func Submit(id string) boutique.Action {
     Update: id,
   }
 }
-    
+```
 
+### Writing Updaters
+
+Updaters interpret Actions and handle updating the data in the store.  All Updaters must conform to the following signature:
+
+```go
+type Updater func(state interface{}, action Action) interface{}
+```
+
+The "state" is the data object that will get updated.  In our case, this would be "Data" that we defined above.  "action" is the Action that is to be processed.  An Updater does NOT have to handle an Action.  Updater returns the updated state object.
+
+Here we will define Updaters to handle our Actions.  We could write one Updater to handle all Actions or multiple Updaters handling each individual Actions.
+
+```go
 
 ```
 
