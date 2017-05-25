@@ -32,17 +32,50 @@ The first, running slower is because we must not only type assert at different p
 
 The second, runtime errors, happen when one of two events occur.  The type of data to be stored in Boutique is changed on a write.  The first data passed to the store is the only type that can be stored.  Any attempt to store a different type of data will be result in an error.  The second way is if the data being stored in Boutique is not a struct type.  The top level data must be a struct.  In a non-generic store, these would be caught by the compiler.  But these are easy to avoid.
 
-The third is more difficult.  Changes are routed through Actions.  The concepts take a bit to understand and you have to be careful to copy the data when updating the store's data.  This adds a certain amount of complexity, but changes to the store are easily readable from a readability perspective.  
-
-
+The third is more difficult.  Changes are routed through Actions.  The concepts take a bit to understand and you have to be careful to copy the data when updating the store's data.  This adds a certain amount of complexity, but changes to the store are easily readable from a readability perspective.
 
 ## Let's get started!
 
 ### First, define what data you want to store
 
-To start with, the data to be stored must be of type struct.  Now to be clear, this cannot be \*struct, it must be a plane struct.
+To start with, the data to be stored must be of type struct.  Now to be clear, this cannot be \*struct, it must be a plain struct.  It is also important to note that only public fields can received notification of subscriber changes.
 
+For this example, we are going to build a calculator service.  Users can access the service and submit calculations.  The service has a page that displays a scrolling list of calculations that are being done \(but not all calculations\).  All calculations are recorded to disk.
 
+```go
+type Operation int 
+
+const (
+    Unknown Operation = iota
+    Add
+    Subtract
+    Divide
+    Log
+    Pow
+    Sqrt
+)
+
+// Calculator holds the running calculation on a page.
+type Calculator struct {
+    // Value stores the value of the calculator at any point of the calculation.
+    // If the length is 0, the value is 0.0 .
+    Value []float64
+
+    // Operations is the operations being done.
+    Operations []Operation  
+}
+
+// Data stores the centralized data being stored in Boutique.
+type Data struct {
+    // Calculators stores all in flight calculations.
+    Calculators map[string]Calculator
+    
+    // Total is the total number of calculations done.
+    Total int
+}
+```
+
+## 
 
 ## Previous works
 
