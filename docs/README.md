@@ -43,11 +43,14 @@ To start with, the data to be stored must be of type struct.  Now to be clear, t
 For this example, we are going to build a calculator service.  Users can access the service and submit calculations.  The service has a page that displays a scrolling list of calculations that are being done \(but not all calculations\).  All calculations are recorded to disk.
 
 ```go
-// Operation represents an operation to be done on a number.
-type Operation int 
+package store
+
+// OpType represents an operation to be done on a number.
+type OpType int 
 
 const (
-    Unknown Operation = iota
+    Unknown OpType = iota
+    Number
     Add
     Subtract
     Divide
@@ -55,6 +58,11 @@ const (
     Pow
     Sqrt
 )
+
+type Operation struct {
+    Number float64
+    Type OpType
+}
 
 // Calculator holds the running calculation on a page.
 type Calculator struct {
@@ -64,7 +72,7 @@ type Calculator struct {
 
     // Operations is the operations being done.
     Operations []Operation
-    
+
     // String represents the string representation of what should be displayed.
     String []string
 }
@@ -73,13 +81,61 @@ type Calculator struct {
 type Data struct {
     // Calculators stores all in flight calculations.
     Calculators map[string]Calculator
+    
+    // Submitted is submitted calculations.
+    Submitted []Calculator
 
     // Total is the total number of calculations done.
     Total int
 }
 ```
 
-## 
+### Create our actions
+
+Boutique requires changes to be submitted via Actions.  A boutique.Action contains two fields:
+
+* Type, which indicates a type of action that is being committed to the store.
+* Update, which can be nil or contain a type that is used in updating the store.  This may be a value that will be placed in a field, a key that will be deleted from a map, or whatever is needed.
+
+```go
+package actions
+
+// These represent different type of actions we are committing to the store.
+const (
+    Unknown = iota
+    ActAdd
+    ActDelete
+    ActSubmit
+)
+
+// AddOp adds an operation to the store's Calculator's field at id "id".
+func AddOp(id string, o Operation) boutique.Action {
+  return boutique.Action{
+    Type: ActAdd,
+    Update: struct{id string, op Operation}{id, o},
+  }
+}
+
+// DeleteOp removes an operation from the store's Calculator field at id "id".
+func DeleteOp(id string) boutique.Action {
+  return boutique.Action{
+    Type: ActDelete,
+    Update: id,
+  }
+}
+
+// Submit submits the calculation. This entails removing the Calculation from .Calculations
+// and moving it to .Submitted.
+func Submit(id string) boutique.Action {
+  return boutique.Action{
+    Type: ActSubmit,
+    Update: id,
+  }
+}
+    
+
+
+```
 
 ## Previous works
 
