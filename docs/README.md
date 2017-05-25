@@ -43,6 +43,7 @@ To start with, the data to be stored must be of type struct.  Now to be clear, t
 For this example, we are going to build a calculator service.  Users can access the service and submit calculations.  The service has a page that displays a scrolling list of calculations that are being done \(but not all calculations\).  All calculations are recorded to disk.
 
 ```go
+// Operation represents an operation to be done on a number.
 type Operation int 
 
 const (
@@ -62,14 +63,17 @@ type Calculator struct {
     Value []float64
 
     // Operations is the operations being done.
-    Operations []Operation  
+    Operations []Operation
+    
+    // String represents the string representation of what should be displayed.
+    String []string
 }
 
 // Data stores the centralized data being stored in Boutique.
 type Data struct {
     // Calculators stores all in flight calculations.
     Calculators map[string]Calculator
-    
+
     // Total is the total number of calculations done.
     Total int
 }
