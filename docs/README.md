@@ -12,9 +12,11 @@ In addition, Boutique allows subscriptions to be registered for changes to a dat
 
 Finally, Boutique supports middleware for any change that is being committed to the store.  This allows for sets of features, such as a storage record of changes to the store.
 
+## Before we get started
 
+### Go doesn't have immutable objects, does it?
 
-
+Correct, Go doesn't have immutable objects.  It does contain immutable types, such as strings and constants.  
 
 ## Previous works
 
