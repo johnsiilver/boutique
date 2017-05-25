@@ -100,6 +100,10 @@ Boutique requires changes to be submitted via Actions.  A boutique.Action contai
 ```go
 package actions
 
+import (
+  "github.com/johnsiilver/boutique"
+)
+
 // These represent different type of actions we are committing to the store.
 const (
     Unknown = iota
@@ -147,6 +151,8 @@ The "state" is the data object that will get updated.  In our case, this would b
 Here we will define Updaters to handle our Actions.  We could write one Updater to handle all Actions or multiple Updaters handling each individual Actions.
 
 ```go
+package updaters
+
 
 ```
 
