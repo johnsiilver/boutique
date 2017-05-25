@@ -30,7 +30,9 @@ There are three main drawbacks for using Boutique:
 
 The first, running slower is because we must not only type assert at different points, but reflection is used to detect changes in the data fields that are in the data being stored.  This cost can be made up for by reads of data without synchronization and reduced complexity in the subscription model.
 
-The second, runtime errors, happen when one of two events occur.  The type of data to be stored in Boutique is changed on a write.  The first data passed to the store is the only type that can be stored.  Any attempt to store a different type of data will be 
+The second, runtime errors, happen when one of two events occur.  The type of data to be stored in Boutique is changed on a write.  The first data passed to the store is the only type that can be stored.  Any attempt to store a different type of data will be result in an error.  The second way is if the data being stored in Boutique is not a struct type.  The top level data must be a struct.  In a non-generic store, these would be caught by the compiler, but are easy to avoid.
+
+
 
 ## Previous works
 
