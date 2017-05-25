@@ -112,11 +112,16 @@ const (
     ActSubmit
 )
 
+type AddUpdate struct {
+  ID string
+  Op Operation
+}
+
 // AddOp adds an operation to the store's Calculator's field at id "id".
 func AddOp(id string, o Operation) boutique.Action {
   return boutique.Action{
     Type: ActAdd,
-    Update: struct{id string, op Operation}{id, o},
+    Update: AddUpdate{id, o},
   }
 }
 
@@ -153,7 +158,51 @@ Here we will define Updaters to handle our Actions.  We could write one Updater 
 ```go
 package updaters
 
+func Add(state interface{}, action Action) interface{} {
+  // This only handles the Add Action, so if it is not that type, just return the state we received.
+  if action.Type != actions.ActAdd {
+    return s
+  }
 
+  s := state.(store.Data)
+  a := action.Update.(actions.AddUpdate)
+  
+  v := s.Calculators[a.ID]
+  m := map[string]Calculators{}
+  for k, v := s.Calculators {
+    
+  
+  s.Operations = boutique.CopyAppendSlice(v, a.Op).([]actions.Operation)
+}
+
+func Delete(state interface{}, action Action) interface{} {
+ if action.Type != actions.ActAdd {
+    return s
+  }
+
+  s := state.(store.Data)
+
+}
+
+func Submit(state interface{}, action Action) interface{} {
+  if action.Type != actions.ActAdd {
+    return s
+  }
+
+  s := state.(store.Data)
+
+
+}
+// RunTime updates our state object for ActUpdateRunTime Actions.
+func RunTime (state interface{}, action Action) interface{} {
+  s := state.(MyState)
+
+  switch action.Type {
+  case ActUpdateRunTime:
+    s.RunTime = action.Update.RunTime.(time.Time)
+  }
+  return s
+}
 ```
 
 ## Previous works
