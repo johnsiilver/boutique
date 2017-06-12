@@ -362,6 +362,26 @@ func (s State) IsZero() bool {
 // GetState returns the state of the Store.
 type GetState func() State
 
+// MWArgs are the arguments to a Middleware implmentor.
+type MWArgs struct {
+	// Action is the Action that is being performed.
+	Action Action
+	// NewDate is the proposed new State.Data field in the Container. This can be modified by the
+	// Middleware and returned as the changedData return value.
+	NewData interface{}
+	// GetState if a function that will return the current State of the Container.
+	GetState GetState
+	// Committed is only used if the Middleware will spin off a goroutine.  In that case,
+	// the committed state will be sent via this channel. This allows Middleware that wants
+	// to do something based on the final state (like logging) to work.  If the data was not
+	// committed due to another Middleware cancelling the commit, State.IsZero() will be true.
+	Committed chan State
+
+	// WG must have .Done() called by all Middleware once it has finished. If using Committed, you must
+	// not call WG.Done() until your goroutine is completed.
+	WG *sync.WaitGroup
+}
+
 // Middleware provides a function that is called before the state is written.  The Action that
 // is being applied is passed, with the newData that is going to be commited, a method to get the current state,
 // and committed which will close when newData is committed. It returns either a changed version of newData or
@@ -372,7 +392,7 @@ type GetState func() State
 // the data is committed.  If the data is not committed because another Middleware returns an error, the channel will
 // be closed with an empty state. This ability allow Middleware that performs things such as logging the final result.
 // If using this ability, do not call wg.Done() until all processing is done.
-type Middleware func(a Action, newData interface{}, getState GetState, committed chan State, wg *sync.WaitGroup) (changedData interface{}, stop bool, err error)
+type Middleware func(args MWArgs) (changedData interface{}, stop bool, err error)
 
 // combineUpdater takes multiple Updaters and combines them into a
 // single instance.
@@ -552,7 +572,7 @@ func (s *Container) processMiddleware(a Action, newData interface{}, wg *sync.Wa
 	}
 
 	for i, m := range s.middle {
-		cd, stop, err := m(a, newData, s.State, commitChans[i], wg)
+		cd, stop, err := m(MWArgs{Action: a, NewData: newData, GetState: s.State, Committed: commitChans[i], WG: wg})
 		if err != nil {
 			return nil, nil, err
 		}

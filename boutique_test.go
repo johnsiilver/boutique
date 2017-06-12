@@ -491,10 +491,10 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	logs := []int{}
-	logger := func(a Action, newData interface{}, getState GetState, committed chan State, wg *sync.WaitGroup) (changedData interface{}, stop bool, err error) {
+	logger := func(args MWArgs) (changedData interface{}, stop bool, err error) {
 		go func() {
-			defer wg.Done()
-			state := <-committed
+			defer args.WG.Done()
+			state := <-args.Committed
 			if state.IsZero() {
 				return
 			}
@@ -503,18 +503,18 @@ func TestMiddleware(t *testing.T) {
 		return nil, false, nil
 	}
 
-	fiveHundredToOneThousand := func(a Action, newData interface{}, getState GetState, committed chan State, wg *sync.WaitGroup) (changedData interface{}, stop bool, err error) {
-		defer wg.Done()
-		data := newData.(MyState)
+	fiveHundredToOneThousand := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+		defer args.WG.Done()
+		data := args.NewData.(MyState)
 		if data.Counter == 500 {
 			data.Counter = 1000
 		}
 		return data, false, nil
 	}
 
-	skipSevenHundred := func(a Action, newData interface{}, getState GetState, committed chan State, wg *sync.WaitGroup) (changedData interface{}, stop bool, err error) {
-		defer wg.Done()
-		data := newData.(MyState)
+	skipSevenHundred := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+		defer args.WG.Done()
+		data := args.NewData.(MyState)
 		if data.Counter == 700 {
 			return nil, true, nil
 		}
@@ -522,18 +522,18 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	sawSevenHundred := false
-	sevenHundred := func(a Action, newData interface{}, getState GetState, committed chan State, wg *sync.WaitGroup) (changedData interface{}, stop bool, err error) {
-		defer wg.Done()
-		data := newData.(MyState)
+	sevenHundred := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+		defer args.WG.Done()
+		data := args.NewData.(MyState)
 		if data.Counter == 700 {
 			sawSevenHundred = true
 		}
 		return nil, false, nil
 	}
 
-	errorEightHundred := func(a Action, newData interface{}, getState GetState, committed chan State, wg *sync.WaitGroup) (changedData interface{}, stop bool, err error) {
-		defer wg.Done()
-		data := newData.(MyState)
+	errorEightHundred := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+		defer args.WG.Done()
+		data := args.NewData.(MyState)
 		if data.Counter == 800 {
 			return nil, false, fmt.Errorf("error")
 		}
