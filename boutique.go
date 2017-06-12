@@ -303,6 +303,18 @@ type Signal struct {
 	Fields []string
 }
 
+// FieldChanged loops over Fields to deterimine if "f" exists.
+// len(s.Fields) is always small, so a linear search is optimal.
+// Only useful if you are subscribed to "Any", as otherwise its a single entry.
+func (s Signal) FieldChanged(f string) bool {
+	for _, field := range s.Fields {
+		if field == f {
+			return true
+		}
+	}
+	return false
+}
+
 // Action represents an action to take on the Store.
 type Action struct {
 	// Type should be an enumerated constant representing the type of Action.
