@@ -9,7 +9,7 @@ Features:
 
  * Immutable data does not require locking outside the store.
  * Subscribing to individual field changes are simple.
- * Data locking is handled by the Container.
+ * Data locking is handled by the Store.
 
 Drawbacks:
 
@@ -75,7 +75,7 @@ it must be a struct (not to be confused with a *struct).
 
 Design your Actions
 
-Actions signal the type of change you want to make to a field in the Container.
+Actions signal the type of change you want to make to a field in the Store.
 It consists of a two fields:
 
   Type: The type of change that is occurring, an int enum.
@@ -209,12 +209,12 @@ it must return the state object it received.
 
 Consolidate Updaters to a Modifier
 
-A Modifier handles consolidating your Updaters for the Container.
+A Modifier handles consolidating your Updaters for the Store.
 
   // mod will be used to run all of our Update objects on any change that is made.
   mod := NewModifier(Connection, State, RunTime, Active)
 
-Create our Container object:
+Create our Store object:
 
   // iniital is the initial state of the state object.
   var initial =  MyState {
@@ -263,7 +263,7 @@ This should output:
 Retrieve the current state
 
 It is safe to do read operations on this state object at any time without a lock.
-However, you should never edit this object. Modifications should only happen via Container.Process().
+However, you should never edit this object. Modifications should only happen via Store.Process().
 
   state  = store.Store().(MyState)
   fmt.Println(state.State)
@@ -283,7 +283,7 @@ import (
 	"github.com/golang/glog"
 )
 
-// Any is used to indicated to Container.Subscribe() that you want updates for
+// Any is used to indicated to Store.Subscribe() that you want updates for
 // any update to the store, not just a field.
 const Any = "any"
 
@@ -291,7 +291,7 @@ var (
 	publicRE = regexp.MustCompile(`^[A-Z].*`)
 )
 
-// Signal is used to signal upstream subscribers that a field in the Container.Store
+// Signal is used to signal upstream subscribers that a field in the Store.Store
 // has changed.
 type Signal struct {
 	// Version is the version of the field that was changed.  If Any was passed, it will
@@ -303,7 +303,7 @@ type Signal struct {
 	Fields []string
 }
 
-// Action represents an action to take on the Container.
+// Action represents an action to take on the Store.
 type Action struct {
 	// Type should be an enumerated constant representing the type of Action.
 	// It is valuable to use http://golang.org/x/tools/cmd/stringer to allow
@@ -366,10 +366,10 @@ type GetState func() State
 type MWArgs struct {
 	// Action is the Action that is being performed.
 	Action Action
-	// NewDate is the proposed new State.Data field in the Container. This can be modified by the
+	// NewDate is the proposed new State.Data field in the Store. This can be modified by the
 	// Middleware and returned as the changedData return value.
 	NewData interface{}
-	// GetState if a function that will return the current State of the Container.
+	// GetState if a function that will return the current State of the Store.
 	GetState GetState
 	// Committed is only used if the Middleware will spin off a goroutine.  In that case,
 	// the committed state will be sent via this channel. This allows Middleware that wants
@@ -438,7 +438,7 @@ type stateChange struct {
 // CancelFunc is used to cancel a subscription
 type CancelFunc func()
 
-func cancelFunc(c *Container, field string, id int) CancelFunc {
+func cancelFunc(c *Store, field string, id int) CancelFunc {
 	return func() {
 		c.smu.Lock()
 		defer c.smu.Unlock()
@@ -462,9 +462,9 @@ func cancelFunc(c *Container, field string, id int) CancelFunc {
 	}
 }
 
-// Container provides access to the single data store for the application.
-// The Container is thread-safe.
-type Container struct {
+// Store provides access to the single data store for the application.
+// The Store is thread-safe.
+type Store struct {
 	// mod holds all the state modifiers.
 	mod Modifier
 
@@ -474,7 +474,7 @@ type Container struct {
 	// pmu prevents concurrent Perform() calls.
 	pmu sync.Mutex
 
-	// state is current state of the Container. Its value is a interface{}, so we
+	// state is current state of the Store. Its value is a interface{}, so we
 	// don't know the type, but it is guarenteed to be a struct.
 	state atomic.Value
 
@@ -488,10 +488,10 @@ type Container struct {
 	sid int
 }
 
-// New is the constructor for Container. initialState should be a struct that is
+// New is the constructor for Store. initialState should be a struct that is
 // used for application's state. All Updaters in mod must return the same struct
 // that initialState contains or you will receive a panic.
-func New(initialState interface{}, mod Modifier, middle []Middleware) (*Container, error) {
+func New(initialState interface{}, mod Modifier, middle []Middleware) (*Store, error) {
 	if err := validateState(initialState); err != nil {
 		return nil, err
 	}
@@ -505,15 +505,15 @@ func New(initialState interface{}, mod Modifier, middle []Middleware) (*Containe
 		fieldVersions[f] = 0
 	}
 
-	s := &Container{mod: mod, subscribers: subscribers{}, middle: middle}
+	s := &Store{mod: mod, subscribers: subscribers{}, middle: middle}
 	s.state.Store(State{Version: 0, FieldVersions: fieldVersions, Data: initialState})
 
 	return s, nil
 }
 
-// Perform performs an Action on the Container's state. wg will be decremented
+// Perform performs an Action on the Store's state. wg will be decremented
 // by 1 to signal the completion of the state change. wg can be nil.
-func (s *Container) Perform(a Action, wg *sync.WaitGroup) error {
+func (s *Store) Perform(a Action, wg *sync.WaitGroup) error {
 	defer func() {
 		if wg != nil {
 			wg.Done()
@@ -565,7 +565,7 @@ func (s *Container) Perform(a Action, wg *sync.WaitGroup) error {
 	return nil
 }
 
-func (s *Container) processMiddleware(a Action, newData interface{}, wg *sync.WaitGroup) (data interface{}, commitChans []chan State, err error) {
+func (s *Store) processMiddleware(a Action, newData interface{}, wg *sync.WaitGroup) (data interface{}, commitChans []chan State, err error) {
 	commitChans = make([]chan State, len(s.middle))
 	for i := 0; i < len(commitChans); i++ {
 		commitChans[i] = make(chan State, 1)
@@ -588,7 +588,7 @@ func (s *Container) processMiddleware(a Action, newData interface{}, wg *sync.Wa
 	return newData, commitChans, nil
 }
 
-func (s *Container) perform(state State, n interface{}, commitChans []chan State) {
+func (s *Store) perform(state State, n interface{}, commitChans []chan State) {
 	changed := fieldsChanged(state.Data, n)
 
 	// This can happen if middleware interferes.
@@ -624,7 +624,7 @@ func (s *Container) perform(state State, n interface{}, commitChans []chan State
 }
 
 // write processes the change in state.
-func (s *Container) write(sc stateChange) State {
+func (s *Store) write(sc stateChange) State {
 	state := State{Data: sc.new, Version: sc.newVersion, FieldVersions: sc.newFieldVersions}
 	s.state.Store(state)
 
@@ -641,7 +641,7 @@ func (s *Container) write(sc stateChange) State {
 // the Any enumerator, any field change in the state data sends an update.
 // CancelFunc() can be called to cancel the subscription. On cancel, Signal
 // will be closed.
-func (s *Container) Subscribe(field string) (chan Signal, CancelFunc, error) {
+func (s *Store) Subscribe(field string) (chan Signal, CancelFunc, error) {
 	if field != Any && !publicRE.MatchString(field) {
 		return nil, nil, fmt.Errorf("cannot subscribe to a field that is not public: %s", field)
 	}
@@ -667,12 +667,12 @@ func (s *Container) Subscribe(field string) (chan Signal, CancelFunc, error) {
 }
 
 // State returns the current stored state.
-func (s *Container) State() State {
+func (s *Store) State() State {
 	return s.state.Load().(State)
 }
 
 // cast updates subscribers for data changes.
-func (s *Container) cast(sc stateChange) {
+func (s *Store) cast(sc stateChange) {
 	s.smu.RLock()
 	defer s.smu.RUnlock()
 
