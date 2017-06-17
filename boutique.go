@@ -301,6 +301,12 @@ type Signal struct {
 	// Fields are the field names that were updated.  This is only a single name unless
 	// Any is used.
 	Fields []string
+
+	// Done allows you to signal to the caller of Perform() that the work the
+	// Subscriber needs is done.  You should only do this if you pass the
+	// WaitForSubscribers option to Perform() and should always check to see if
+	// Done == nil before using.
+	Done *sync.WaitGroup
 }
 
 // FieldChanged loops over Fields to deterimine if "f" exists.
@@ -404,7 +410,7 @@ type MWArgs struct {
 // the data is committed.  If the data is not committed because another Middleware returns an error, the channel will
 // be closed with an empty state. This ability allow Middleware that performs things such as logging the final result.
 // If using this ability, do not call wg.Done() until all processing is done.
-type Middleware func(args MWArgs) (changedData interface{}, stop bool, err error)
+type Middleware func(args *MWArgs) (changedData interface{}, stop bool, err error)
 
 // combineUpdater takes multiple Updaters and combines them into a
 // single instance.
@@ -474,6 +480,37 @@ func cancelFunc(c *Store, field string, id int) CancelFunc {
 	}
 }
 
+type performOptions struct {
+	committed *sync.WaitGroup
+	subscribe *sync.WaitGroup
+}
+
+// PerformOption is an optional arguement to Store.Peform() calls.
+type PerformOption func(p *performOptions)
+
+// WaitForCommit passed a WaitGroup that will be decremented by 1 when a
+// Perform is completed.  This option allows you to use goroutines to call
+// Perform, continue on and then wait for the commit to be completed.
+// Because you cannot increment the WaitGroup before the Perform, you must wait
+// until Peform() is completed. If doing Perform in a
+func WaitForCommit(wg *sync.WaitGroup) PerformOption {
+	return func(p *performOptions) {
+		p.committed = wg
+	}
+}
+
+// WaitForSubscribers passes a WaitGroup that will be incremented by the
+// number of subscribers that are being sent to in the Perform call and
+// will be decremented to 0 as each Subscriber receives the update message.
+// Because the WaitGroup is incremented inside Perform(), if using a goroutine
+// to call Perform, you need to use WaitForCommit and wait for that WaitGroup
+// before waitng for this WaitGroup.
+func WaitForSubscribers(wg *sync.WaitGroup) PerformOption {
+	return func(p *performOptions) {
+		p.subscribe = wg
+	}
+}
+
 // Store provides access to the single data store for the application.
 // The Store is thread-safe.
 type Store struct {
@@ -525,10 +562,15 @@ func New(initialState interface{}, mod Modifier, middle []Middleware) (*Store, e
 
 // Perform performs an Action on the Store's state. wg will be decremented
 // by 1 to signal the completion of the state change. wg can be nil.
-func (s *Store) Perform(a Action, wg *sync.WaitGroup) error {
+func (s *Store) Perform(a Action, options ...PerformOption) error {
+	opts := &performOptions{}
+	for _, opt := range options {
+		opt(opts)
+	}
+
 	defer func() {
-		if wg != nil {
-			wg.Done()
+		if opts.committed != nil {
+			opts.committed.Done()
 		}
 	}()
 
@@ -553,7 +595,7 @@ func (s *Store) Perform(a Action, wg *sync.WaitGroup) error {
 		return err
 	}
 
-	s.perform(state, n, commitChans)
+	s.perform(state, n, commitChans, opts)
 
 	done := make(chan struct{})
 	timer := time.NewTimer(5 * time.Second)
@@ -584,7 +626,7 @@ func (s *Store) processMiddleware(a Action, newData interface{}, wg *sync.WaitGr
 	}
 
 	for i, m := range s.middle {
-		cd, stop, err := m(MWArgs{Action: a, NewData: newData, GetState: s.State, Committed: commitChans[i], WG: wg})
+		cd, stop, err := m(&MWArgs{Action: a, NewData: newData, GetState: s.State, Committed: commitChans[i], WG: wg})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -600,7 +642,7 @@ func (s *Store) processMiddleware(a Action, newData interface{}, wg *sync.WaitGr
 	return newData, commitChans, nil
 }
 
-func (s *Store) perform(state State, n interface{}, commitChans []chan State) {
+func (s *Store) perform(state State, n interface{}, commitChans []chan State, opts *performOptions) {
 	changed := fieldsChanged(state.Data, n)
 
 	// This can happen if middleware interferes.
@@ -628,7 +670,7 @@ func (s *Store) perform(state State, n interface{}, commitChans []chan State) {
 		changed:          changed,
 	}
 
-	writtenState := s.write(sc)
+	writtenState := s.write(sc, opts)
 
 	for _, ch := range commitChans {
 		ch <- writtenState
@@ -636,14 +678,14 @@ func (s *Store) perform(state State, n interface{}, commitChans []chan State) {
 }
 
 // write processes the change in state.
-func (s *Store) write(sc stateChange) State {
+func (s *Store) write(sc stateChange, opts *performOptions) State {
 	state := State{Data: sc.new, Version: sc.newVersion, FieldVersions: sc.newFieldVersions}
 	s.state.Store(state)
 
 	s.smu.RLock()
 	defer s.smu.RUnlock()
 	if len(s.subscribers) > 0 {
-		go s.cast(sc)
+		go s.cast(sc, opts)
 	}
 	return state
 }
@@ -684,25 +726,35 @@ func (s *Store) State() State {
 }
 
 // cast updates subscribers for data changes.
-func (s *Store) cast(sc stateChange) {
+func (s *Store) cast(sc stateChange, opts *performOptions) {
 	s.smu.RLock()
 	defer s.smu.RUnlock()
 
 	for _, field := range sc.changed {
 		if v, ok := s.subscribers[field]; ok {
 			for _, sub := range v {
-				signal(Signal{Version: sc.newFieldVersions[field], Fields: []string{field}}, sub.ch)
+				if opts.subscribe != nil {
+					opts.subscribe.Add(1)
+				}
+				signal(Signal{Version: sc.newFieldVersions[field], Fields: []string{field}}, sub.ch, opts)
 			}
 		}
 	}
 
 	for _, sub := range s.subscribers["any"] {
-		signal(Signal{Version: sc.newVersion, Fields: sc.changed}, sub.ch)
+		if opts.subscribe != nil {
+			opts.subscribe.Add(1)
+		}
+		signal(Signal{Version: sc.newVersion, Fields: sc.changed}, sub.ch, opts)
 	}
 }
 
 // signal sends a Signa on a channel. If the channel is blocked, the signal is not sent.
-func signal(sig Signal, ch chan Signal) {
+func signal(sig Signal, ch chan Signal, opts *performOptions) {
+	if opts.subscribe != nil {
+		defer opts.subscribe.Done()
+	}
+
 	select {
 	case ch <- sig:
 		// Do nothing

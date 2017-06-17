@@ -50,7 +50,7 @@ func BenchmarkConcurrentPerform(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for i := 0; i < iterations; i++ {
 			wg.Add(1)
-			go s.Perform(IncrCounter(), wg)
+			go s.Perform(IncrCounter(), WaitForCommit(wg))
 		}
 		wg.Wait()
 	}
@@ -70,7 +70,7 @@ func BenchmarkMultifieldPerform(b *testing.B) {
 		for i := 0; i < iterations; i++ {
 			wg.Add(1)
 			//go s.Perform(IncrCounter(), wg)
-			go s.Perform(AppendList("a"), wg)
+			go s.Perform(AppendList("a"), WaitForCommit(wg))
 		}
 		wg.Wait()
 

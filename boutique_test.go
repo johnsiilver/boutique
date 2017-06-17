@@ -297,12 +297,12 @@ func subscribeSignalsCorrectly(t *testing.T) {
 	loops := 1000
 	for i := 0; i < loops; i++ {
 		status = status + ":changed:"
-		s.Perform(Status(status), nil)
+		s.Perform(Status(status))
 		<-countDone
 		<-countDone // For Any
 
 		if i%2 == 0 {
-			s.Perform(AppendList("a"), nil)
+			s.Perform(AppendList("a"))
 			<-countDone
 			<-countDone // For Any
 		}
@@ -335,7 +335,7 @@ func signalsDontBlock(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		s.Perform(IncrCounter(), nil)
+		s.Perform(IncrCounter())
 	}
 	// time.Sleep() things are prone to break, but I don't want to have to put a
 	// signaling mechanism to know when the go cast() of finished.
@@ -388,7 +388,7 @@ func cancelWorks(t *testing.T) {
 			}
 		}
 
-		s.Perform(IncrCounter(), nil)
+		s.Perform(IncrCounter())
 
 		sawBroadcast := make(chan Signal, 10)
 		chClosed := make(chan Signal)
@@ -407,7 +407,7 @@ func cancelWorks(t *testing.T) {
 
 		cancel()
 
-		s.Perform(IncrCounter(), nil)
+		s.Perform(IncrCounter())
 
 		select {
 		case <-chClosed:
@@ -446,14 +446,14 @@ func TestPerform(t *testing.T) {
 	for i := 0; i < loop; i++ {
 		wg.Add(1)
 		status = status + "a"
-		s.Perform(Status(status), wg) // Cannot be done in a goroutine.
+		s.Perform(Status(status), WaitForCommit(wg)) // Cannot be done in a goroutine.
 
 		wg.Add(1)
-		go s.Perform(IncrCounter(), wg)
+		go s.Perform(IncrCounter(), WaitForCommit(wg))
 
 		wg.Add(1)
 		list = append(list, "a")
-		go s.Perform(AppendList("a"), wg)
+		go s.Perform(AppendList("a"), WaitForCommit(wg))
 	}
 
 	wg.Wait()
@@ -491,7 +491,7 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	logs := []int{}
-	logger := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+	logger := func(args *MWArgs) (changedData interface{}, stop bool, err error) {
 		go func() {
 			defer args.WG.Done()
 			state := <-args.Committed
@@ -503,7 +503,7 @@ func TestMiddleware(t *testing.T) {
 		return nil, false, nil
 	}
 
-	fiveHundredToOneThousand := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+	fiveHundredToOneThousand := func(args *MWArgs) (changedData interface{}, stop bool, err error) {
 		defer args.WG.Done()
 		data := args.NewData.(MyState)
 		if data.Counter == 500 {
@@ -512,7 +512,7 @@ func TestMiddleware(t *testing.T) {
 		return data, false, nil
 	}
 
-	skipSevenHundred := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+	skipSevenHundred := func(args *MWArgs) (changedData interface{}, stop bool, err error) {
 		defer args.WG.Done()
 		data := args.NewData.(MyState)
 		if data.Counter == 700 {
@@ -522,7 +522,7 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	sawSevenHundred := false
-	sevenHundred := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+	sevenHundred := func(args *MWArgs) (changedData interface{}, stop bool, err error) {
 		defer args.WG.Done()
 		data := args.NewData.(MyState)
 		if data.Counter == 700 {
@@ -531,7 +531,7 @@ func TestMiddleware(t *testing.T) {
 		return nil, false, nil
 	}
 
-	errorEightHundred := func(args MWArgs) (changedData interface{}, stop bool, err error) {
+	errorEightHundred := func(args *MWArgs) (changedData interface{}, stop bool, err error) {
 		defer args.WG.Done()
 		data := args.NewData.(MyState)
 		if data.Counter == 800 {
@@ -548,7 +548,7 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	for i := 0; i < 1000; i++ {
-		s.Perform(IncrCounter(), nil)
+		s.Perform(IncrCounter())
 	}
 
 	wantLogs := []int{}
