@@ -302,6 +302,9 @@ type Signal struct {
 	// Any is used.
 	Fields []string
 
+	// State is the new State object.
+	State State
+
 	// Done allows you to signal to the caller of Perform() that the work the
 	// Subscriber needs is done.  You should only do this if you pass the
 	// WaitForSubscribers option to Perform() and should always check to see if
@@ -483,6 +486,7 @@ func cancelFunc(c *Store, field string, id int) CancelFunc {
 type performOptions struct {
 	committed *sync.WaitGroup
 	subscribe *sync.WaitGroup
+	noUpdate  bool
 }
 
 // PerformOption is an optional arguement to Store.Peform() calls.
@@ -508,6 +512,14 @@ func WaitForCommit(wg *sync.WaitGroup) PerformOption {
 func WaitForSubscribers(wg *sync.WaitGroup) PerformOption {
 	return func(p *performOptions) {
 		p.subscribe = wg
+	}
+}
+
+// NoUpdate indicates that when this Perform() is run, no subscribers affected
+// should receive an update for this change.
+func NoUpdate() PerformOption {
+	return func(p *performOptions) {
+		p.noUpdate = true
 	}
 }
 
@@ -682,10 +694,15 @@ func (s *Store) write(sc stateChange, opts *performOptions) State {
 	state := State{Data: sc.new, Version: sc.newVersion, FieldVersions: sc.newFieldVersions}
 	s.state.Store(state)
 
+	if opts.noUpdate {
+		return state
+	}
+
 	s.smu.RLock()
 	defer s.smu.RUnlock()
+
 	if len(s.subscribers) > 0 {
-		go s.cast(sc, opts)
+		go s.cast(sc, state, opts)
 	}
 	return state
 }
@@ -726,7 +743,7 @@ func (s *Store) State() State {
 }
 
 // cast updates subscribers for data changes.
-func (s *Store) cast(sc stateChange, opts *performOptions) {
+func (s *Store) cast(sc stateChange, state State, opts *performOptions) {
 	s.smu.RLock()
 	defer s.smu.RUnlock()
 
@@ -736,7 +753,7 @@ func (s *Store) cast(sc stateChange, opts *performOptions) {
 				if opts.subscribe != nil {
 					opts.subscribe.Add(1)
 				}
-				signal(Signal{Version: sc.newFieldVersions[field], Fields: []string{field}}, sub.ch, opts)
+				signal(Signal{Version: sc.newFieldVersions[field], State: state, Fields: []string{field}}, sub.ch, opts)
 			}
 		}
 	}
@@ -745,7 +762,7 @@ func (s *Store) cast(sc stateChange, opts *performOptions) {
 		if opts.subscribe != nil {
 			opts.subscribe.Add(1)
 		}
-		signal(Signal{Version: sc.newVersion, Fields: sc.changed}, sub.ch, opts)
+		signal(Signal{Version: sc.newVersion, State: state, Fields: sc.changed}, sub.ch, opts)
 	}
 }
 
