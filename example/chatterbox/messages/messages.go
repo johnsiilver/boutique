@@ -18,11 +18,11 @@ const (
 	CMSubscribe ClientMsgType = 1
 	// CMDrop indicates they wish to stop communicating on a channel and we should remove them.
 	CMDrop ClientMsgType = 2
-	// CMSend indicates they are sending a text to everyone.
+	// CMSendText indicates they are sending a text to everyone.
 	CMSendText ClientMsgType = 3
 )
 
-// Clientrepresents a message from the client.
+// Client represents a message from the client.
 type Client struct {
 	// Type is the type of message.
 	Type ClientMsgType
@@ -98,11 +98,17 @@ const (
 	SMError ServerMsgType = 1
 	// SMSendText is text intended for the client.
 	SMSendText = 2
+	// SMSubAck indicates that we successfully subscribed a user to the channel.
+	SMSubAck = 3
 )
 
+// Server is a message that is sent from the server.
 type Server struct {
 	// Type is the type of message we are sending.
 	Type ServerMsgType
+
+	// User is the user who sent some type of message.
+	User string
 
 	// Text is the text of the message if Type == SMSendText.
 	Text Text
