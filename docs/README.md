@@ -48,54 +48,70 @@ Boutique is useful in the following scenarios:
 
 To start with, the data to be stored must be of type struct.  Now to be clear, this cannot be \*struct, it must be a plain struct.  It is also important to note that only public fields can received notification of subscriber changes.
 
-For this example, we are going to build a calculator service.  Users can access the service and submit calculations.  The service has a page that displays a scrolling list of calculations that are being done \(but not all calculations\).  All calculations are recorded to disk.
+For this example, we are going to use part of the example application included with Boutique, a chat server.  Users access the chat server, subscribing to a comm channel.  They can then send and receive messages.  We are going to include middleware to help debug and log all conversations. 
+
+This example is not going to include all of the application's functions, just enough to cover the basics.
+
+So let's define the data we need, which is going to be stored in state/data/data.go:
 
 ```go
-package store
+// Package data holds the Store object that is used by our boutique instances.
+package data
 
-// OpType represents an operation to be done on a number.
-type OpType int 
-
-const (
-    Unknown OpType = iota
-    Number
-    Add
-    Subtract
-    Divide
-    Log
-    Pow
-    Sqrt
+import (
+	"os"
+	"time"
 )
 
-type Operation struct {
-    Number float64
-    Type OpType
+// OpenFile contains access to a file and the last time we accessed it.
+type OpenFile struct {
+	*os.File
+
+	// LastAccess is the last time the file was accessed.
+	LastAccess time.Time
 }
 
-// Calculator holds the running calculation on a page.
-type Calculator struct {
-    // Value stores the value of the calculator at any point of the calculation.
-    // If the length is 0, the value is 0.0 .
-    Value []float64
-
-    // Operations is the operations being done.
-    Operations []Operation
-
-    // String represents the string representation of what should be displayed.
-    String []string
+// IsZero indicates that OpenFile has not been initialized.
+func (o OpenFile) IsZero() bool {
+	if o.File == nil {
+		return true
+	}
+	return false
 }
 
-// Data stores the centralized data being stored in Boutique.
-type Data struct {
-    // Calculators stores all in flight calculations.
-    Calculators map[string]Calculator
-
-    // Submitted is submitted calculations.
-    Submitted []Calculator
-
-    // Total is the total number of calculations done.
-    Total int
+// Message represents a message sent.
+type Message struct {
+	// ID is the ID of the message in the order it was sent, starting at 0.
+	ID int
+	// Timestamp is the time in which the message was written.
+	Timestamp time.Time
+	// User is the user who sent the message.
+	User string
+	// Text is the text of the message.
+	Text string
 }
+
+// State holds our state data for each communication channel that is open.
+type State struct {
+	// ServerID is a UUID that uniquely represents this server instance.
+	ServerID string
+
+	// Channel is the channel this represents.
+	Channel string
+	// Users are the users in the Channel.
+	Users []string
+	// Messages in the current messages.
+	Messages []Message
+
+	// LogDebug indicates to start logging debug information.
+	// LogChan indicates to log chat messages.
+	LogDebug, LogChan bool
+	// DebugFile holds access to the a debug file we opened for this channel.
+	DebugFile OpenFile
+	// ChanFile holds access to the chat log for the channel.
+	ChanFile OpenFile
+}
+
 ```
 
 ### Create our actions
