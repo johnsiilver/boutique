@@ -34,6 +34,14 @@ The second, runtime errors, happen when one of two events occur.  The type of da
 
 The third is more difficult.  Changes are routed through Actions.  Actions trigger Updaters, which also must be written.  The concepts take a bit to understand and you have to be careful to copy the data and not mutate the data when writing Updaters.   tThis adds a certain amount of complexity, but changes to the store are easily readable from a readability perspective.
 
+## Best use cases?
+
+Boutique is useful in the following scenarios:
+
+* You want a web based application to store state on the server and not in Javascript clients.  Keep the client as a simple renderer of data changes sent from the server.
+* Your application has lots of clients, each which need to store state and receive updates.
+* You have an application that needs to store a single state and send changes to clients.  However, be aware that boutique has runtime costs and may not be appropriate if every nanosecond counts.
+
 ## Let's get started!
 
 ### First, define what data you want to store
@@ -166,12 +174,12 @@ func Add(state interface{}, action Action) interface{} {
 
   s := state.(store.Data)
   a := action.Update.(actions.AddUpdate)
-  
+
   v := s.Calculators[a.ID]
   m := map[string]Calculators{}
   for k, v := s.Calculators {
-    
-  
+
+
   s.Operations = boutique.CopyAppendSlice(v, a.Op).([]actions.Operation)
 }
 
