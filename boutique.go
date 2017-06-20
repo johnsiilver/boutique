@@ -1,7 +1,7 @@
 /*
 Package boutique provides an immutable state storage with subscriptions to
-changes in the store. It is intended to be a single storage solution for a
-service.  The design has its origins in Flux and Redux.
+changes in the store. It is intended to be a single storage for individual client
+data or a single state store for an application not requiring high QPS.
 
 Features and Drawbacks
 
@@ -29,18 +29,24 @@ Usage structure
 
 Boutique provides storage that is best designed in a modular method:
 
-  └── storage
-    ├── storage.go
+  └── state
+    ├── state.go
     ├── actions
     │   └── actions.go
+		├── data
+		|   └── data.go
+		├── middleware
+		|   └── middleware.go
     └── updaters
         └── updaters.go
 
 The files are best organized by using them as follows:
 
-  storage.go - Holds the store object
-  actions.go - Holds the actions that will be used by the updaters
-  updaters.go - Holds all the actions that change the store's data
+  state.go - Holds the constructor for a boutique.Store for your application
+  actions.go - Holds the actions that will be used by the updaters to update the store
+	data.go - Holds the definition of your state object
+	middleware.go = Holds middleware for acting on changes to your data. This is not required
+  updaters.go - Holds all the updaters that are used by the boutique.Store to modify the store's data
 
 
   Note: These are all simply suggestions, you can combine this in a single file or name the files whatever you wish.
@@ -485,7 +491,7 @@ func cancelFunc(c *Store, field string, id int) CancelFunc {
 
 type performOptions struct {
 	committed *sync.WaitGroup
-	subscribe *sync.WaitGroup
+	subscribe chan State
 	noUpdate  bool
 }
 
@@ -503,15 +509,14 @@ func WaitForCommit(wg *sync.WaitGroup) PerformOption {
 	}
 }
 
-// WaitForSubscribers passes a WaitGroup that will be incremented by the
-// number of subscribers that are being sent to in the Perform call and
-// will be decremented to 0 as each Subscriber receives the update message.
-// Because the WaitGroup is incremented inside Perform(), if using a goroutine
-// to call Perform, you need to use WaitForCommit and wait for that WaitGroup
-// before waitng for this WaitGroup.
-func WaitForSubscribers(wg *sync.WaitGroup) PerformOption {
+// WaitForSubscribers passes a channel that will receive the State from a change
+// once all subscribers have been updated with this state. This channel should
+// generally have a buffer of 1. If not, the Perform() will return an error.
+// If the channel is full when it tries to update the channel, no update will
+// be sent.
+func WaitForSubscribers(ch chan State) PerformOption {
 	return func(p *performOptions) {
-		p.subscribe = wg
+		p.subscribe = ch
 	}
 }
 
@@ -572,8 +577,7 @@ func New(initialState interface{}, mod Modifier, middle []Middleware) (*Store, e
 	return s, nil
 }
 
-// Perform performs an Action on the Store's state. wg will be decremented
-// by 1 to signal the completion of the state change. wg can be nil.
+// Perform performs an Action on the Store's state.
 func (s *Store) Perform(a Action, options ...PerformOption) error {
 	opts := &performOptions{}
 	for _, opt := range options {
@@ -747,30 +751,35 @@ func (s *Store) cast(sc stateChange, state State, opts *performOptions) {
 	s.smu.RLock()
 	defer s.smu.RUnlock()
 
+	wg := &sync.WaitGroup{}
 	for _, field := range sc.changed {
 		if v, ok := s.subscribers[field]; ok {
 			for _, sub := range v {
-				if opts.subscribe != nil {
-					opts.subscribe.Add(1)
-				}
-				signal(Signal{Version: sc.newFieldVersions[field], State: state, Fields: []string{field}}, sub.ch, opts)
+				wg.Add(1)
+				go signal(Signal{Version: sc.newFieldVersions[field], State: state, Fields: []string{field}}, sub.ch, wg, opts)
 			}
 		}
 	}
 
 	for _, sub := range s.subscribers["any"] {
-		if opts.subscribe != nil {
-			opts.subscribe.Add(1)
+		wg.Add(1)
+		go signal(Signal{Version: sc.newVersion, State: state, Fields: sc.changed}, sub.ch, wg, opts)
+	}
+
+	wg.Wait()
+	if opts.subscribe != nil {
+		select {
+		case opts.subscribe <- state:
+			// Do nothing
+		default:
+			glog.Errorf("someone passed a WaitForSubscribers with a full channel")
 		}
-		signal(Signal{Version: sc.newVersion, State: state, Fields: sc.changed}, sub.ch, opts)
 	}
 }
 
 // signal sends a Signa on a channel. If the channel is blocked, the signal is not sent.
-func signal(sig Signal, ch chan Signal, opts *performOptions) {
-	if opts.subscribe != nil {
-		defer opts.subscribe.Done()
-	}
+func signal(sig Signal, ch chan Signal, wg *sync.WaitGroup, opts *performOptions) {
+	defer wg.Done()
 
 	select {
 	case ch <- sig:
