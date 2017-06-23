@@ -234,31 +234,9 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
 			continue
 		}
-		toSend := []data.Message{}
 
-		if len(msgs) > 1 {
-			var (
-				i     int
-				msg   data.Message
-				found bool
-			)
-			for i, msg = range msgs {
-				if msg.ID == lastMsgID {
-					found = true
-					break
-				}
-			}
-			if found {
-				toSend = msgs[i+1:]
-				lastMsgID = toSend[len(toSend)-1].ID
-			} else {
-				toSend = msgs
-				lastMsgID = toSend[0].ID
-			}
-		} else {
-			toSend = msgs
-			lastMsgID = toSend[0].ID
-		}
+		var toSend []data.Message
+		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
 
 		for _, ts := range toSend {
 			msg := messages.Server{
@@ -274,6 +252,40 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 			}
 		}
 	}
+}
+
+// sendThis takes the Messages in the store, locates all Messages after
+// lastMsgID and then returns a slice containing those Messages and the
+// new lastMsgID.
+// TODO(johnsiilver): Because these messages have ascending IDs, should probably
+// look at the first ID and determine where the lastMsgID is instead of looping.
+func (*ChatterBox) sendThis(msgs []data.Message, lastMsgID int) ([]data.Message, int) {
+	toSend := []data.Message{}
+
+	if len(msgs) > 1 {
+		var (
+			i     int
+			msg   data.Message
+			found bool
+		)
+		for i, msg = range msgs {
+			if msg.ID == lastMsgID {
+				found = true
+				break
+			}
+		}
+		if found {
+			toSend = msgs[i+1:]
+			lastMsgID = toSend[len(toSend)-1].ID
+		} else {
+			toSend = msgs
+			lastMsgID = toSend[0].ID
+		}
+	} else { // FYI, we always have at least one Message.
+		toSend = msgs
+		lastMsgID = toSend[0].ID
+	}
+	return toSend, lastMsgID
 }
 
 // read reads a Message off the websocket.
