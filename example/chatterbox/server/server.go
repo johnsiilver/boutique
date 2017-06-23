@@ -238,16 +238,23 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 
 		if len(msgs) > 1 {
 			var (
-				i   int
-				msg data.Message
+				i     int
+				msg   data.Message
+				found bool
 			)
 			for i, msg = range msgs {
 				if msg.ID == lastMsgID {
+					found = true
 					break
 				}
 			}
-			toSend = msgs[i+1:]
-			lastMsgID = toSend[len(toSend)-1].ID
+			if found {
+				toSend = msgs[i+1:]
+				lastMsgID = toSend[len(toSend)-1].ID
+			} else {
+				toSend = msgs
+				lastMsgID = toSend[0].ID
+			}
 		} else {
 			toSend = msgs
 			lastMsgID = toSend[0].ID

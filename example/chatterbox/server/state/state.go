@@ -19,7 +19,7 @@ type Hub struct {
 	Logging *middleware.Logging
 }
 
-// New is the contstructor for Hub.
+// New is the constructor for Hub.
 func New(channelName string) (*Hub, error) {
 	l := &middleware.Logging{}
 	d := data.State{
@@ -31,7 +31,7 @@ func New(channelName string) (*Hub, error) {
 
 	mw := []boutique.Middleware{l.DebugLog, l.ChannelLog}
 
-	s, err := boutique.New(d, updaters.Modifier, mw)
+	s, err := boutique.New(d, updaters.Modifiers, mw)
 	if err != nil {
 		return nil, err
 	}

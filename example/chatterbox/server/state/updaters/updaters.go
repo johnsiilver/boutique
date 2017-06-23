@@ -2,16 +2,14 @@
 package updaters
 
 import (
-	"time"
-
 	"github.com/golang/glog"
 	"github.com/johnsiilver/boutique"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/actions"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/data"
 )
 
-// Modifier is a boutique.Modifier made up of all Updaters in this file.
-var Modifier = boutique.NewModifier(SendMessage, DeleteMessages, AddUser, RemoveUser)
+// Modifiers is a boutique.Modifiers made up of all Modifier(s) in this file.
+var Modifiers = boutique.NewModifiers(SendMessage, DeleteMessages, AddUser, RemoveUser)
 
 // SendMessage handles an Action of type ActSendMessage.
 func SendMessage(state interface{}, action boutique.Action) interface{} {
@@ -19,8 +17,7 @@ func SendMessage(state interface{}, action boutique.Action) interface{} {
 
 	switch action.Type {
 	case actions.ActSendMessage:
-		up := action.Update.(actions.Message)
-		s.Messages = boutique.CopyAppendSlice(s.Messages, data.Message{ID: up.ID, Timestamp: time.Now(), User: up.User, Text: up.Text}).([]data.Message)
+		s.Messages = boutique.CopyAppendSlice(s.Messages, action.Update).([]data.Message)
 	}
 	return s
 }

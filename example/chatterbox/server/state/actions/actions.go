@@ -1,10 +1,12 @@
-// Package actions details boutique.Actions that are used by modifier to modify the store.
+// Package actions details boutique.Actions that are used by modifiers to modify the store.
 package actions
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/johnsiilver/boutique"
+	"github.com/johnsiilver/boutique/example/chatterbox/server/state/data"
 )
 
 const (
@@ -18,23 +20,13 @@ const (
 	ActRemoveUser
 )
 
-// Message is used in an Action of type ActSendMessage.
-type Message struct {
-	// ID is the ID of the Message.
-	ID int
-	// User is the user that is sending the message.
-	User string
-
-	// Text is the text string.
-	Text string
-}
-
 // SendMessage sends a message via the store.
 func SendMessage(id int, user string, s string) (boutique.Action, error) {
 	if len(s) > 500 {
 		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
 	}
-	return boutique.Action{Type: ActSendMessage, Update: Message{ID: id, User: user, Text: s}}, nil
+	m := data.Message{ID: id, Timestamp: time.Now(), User: user, Text: s}
+	return boutique.Action{Type: ActSendMessage, Update: m}, nil
 }
 
 // DeleteMessages deletes messages in our .Messages slice from the front until
