@@ -40,7 +40,7 @@ const iterations = 500
 func BenchmarkConcurrentPerform(b *testing.B) {
 	initial := MyState{Counter: 0}
 
-	s, err := New(initial, NewModifier(UpCounter, UpStatus, UpList), nil)
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
 		b.Fatalf("BenchmarkConcurrentPerform: %s", err)
 	}
@@ -59,7 +59,7 @@ func BenchmarkConcurrentPerform(b *testing.B) {
 func BenchmarkMultifieldPerform(b *testing.B) {
 	initial := MyState{Counter: 0, List: []string{}}
 
-	s, err := New(initial, NewModifier(UpCounter, UpStatus, UpList), nil)
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
 		b.Fatalf("BenchmarkMultifieldConcurrentPerform: %s", err)
 	}

@@ -91,7 +91,7 @@ func UpList(state interface{}, action Action) interface{} {
 }
 
 func TestModifier(t *testing.T) {
-	m := NewModifier(UpCounter, UpStatus)
+	m := NewModifiers(UpCounter, UpStatus)
 	s := MyState{}
 
 	v := m.run(s, IncrCounter())
@@ -241,7 +241,7 @@ func subscribeSignalsCorrectly(t *testing.T) {
 	}
 	freeze.Object(&initial)
 
-	s, err := New(initial, NewModifier(UpCounter, UpStatus, UpList), nil)
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
 		t.Fatalf("TestPerform: %s", err)
 	}
@@ -324,7 +324,7 @@ func signalsDontBlock(t *testing.T) {
 	}
 	freeze.Object(&initial)
 
-	s, err := New(initial, NewModifier(UpCounter, UpStatus, UpList), nil)
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
 		t.Fatalf("signalsDontBlock: %s", err)
 	}
@@ -351,7 +351,7 @@ func signalsDontBlock(t *testing.T) {
 func cancelWorks(t *testing.T) {
 	initial := MyState{Counter: 0}
 
-	s, err := New(initial, NewModifier(UpCounter, UpStatus, UpList), nil)
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
 		t.Fatalf("cancelWorks: %s", err)
 	}
@@ -434,7 +434,7 @@ func TestPerform(t *testing.T) {
 	}
 	freeze.Object(&initial)
 
-	s, err := New(initial, NewModifier(UpCounter, UpStatus, UpList), nil)
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
 		t.Fatalf("TestPerform: %s", err)
 	}
@@ -542,7 +542,7 @@ func TestMiddleware(t *testing.T) {
 
 	middle := []Middleware{logger, fiveHundredToOneThousand, skipSevenHundred, sevenHundred, errorEightHundred}
 
-	s, err := New(initial, NewModifier(UpCounter), middle)
+	s, err := New(initial, NewModifiers(UpCounter), middle)
 	if err != nil {
 		t.Fatalf("TestPerform: %s", err)
 	}

@@ -92,12 +92,6 @@ type Signal struct {
 
 	// State is the new State object.
 	State State
-
-	// Done allows you to signal to the caller of Perform() that the work the
-	// Subscriber needs is done.  You should only do this if you pass the
-	// WaitForSubscribers option to Perform() and should always check to see if
-	// Done == nil before using.
-	Done *sync.WaitGroup
 }
 
 // FieldChanged loops over Fields to deterimine if "f" exists.
@@ -123,26 +117,26 @@ type Action struct {
 	Update interface{}
 }
 
-// Updater takes in the existing state and an action to perform on the state.
+// Modifier takes in the existing state and an action to perform on the state.
 // The result will be the new state.
-// Implementation of an Updater must be careful to not mutate "state", it must
+// Implementation of an Modifier must be careful to not mutate "state", it must
 // work on a copy only. If you are changing a reference type contained in
 // state, you must make a copy of that reference first and then manipulate
 // the copy, storing it in the new state object.
-type Updater func(state interface{}, action Action) interface{}
+type Modifier func(state interface{}, action Action) interface{}
 
-// Modifier provides the internals the ability to use the Updaters.
-type Modifier struct {
-	updater Updater
+// Modifiers provides the internals the ability to use the Modifier.
+type Modifiers struct {
+	updater Modifier
 }
 
-// NewModifier creates a new Modifier with the Updaters provided.
-func NewModifier(updaters ...Updater) Modifier {
-	return Modifier{updater: combineUpdater(updaters...)}
+// NewModifiers creates a new Modifiers with the Modifiers provided.
+func NewModifiers(updaters ...Modifier) Modifiers {
+	return Modifiers{updater: combineModifier(updaters...)}
 }
 
 // run calls the updater on state/action.
-func (m Modifier) run(state interface{}, action Action) interface{} {
+func (m Modifiers) run(state interface{}, action Action) interface{} {
 	return m.updater(state, action)
 }
 
@@ -203,10 +197,10 @@ type MWArgs struct {
 // If using this ability, do not call wg.Done() until all processing is done.
 type Middleware func(args *MWArgs) (changedData interface{}, stop bool, err error)
 
-// combineUpdater takes multiple Updaters and combines them into a
+// combineModifier takes multiple Modifiers and combines them into a
 // single instance.
 // Note: We do not provide any safety here. If you
-func combineUpdater(updaters ...Updater) Updater {
+func combineModifier(updaters ...Modifier) Modifier {
 	return func(state interface{}, action Action) interface{} {
 		if err := validateState(state); err != nil {
 			panic(err)
@@ -314,7 +308,7 @@ func NoUpdate() PerformOption {
 // The Store is thread-safe.
 type Store struct {
 	// mod holds all the state modifiers.
-	mod Modifier
+	mod Modifiers
 
 	// middle holds all the Middleware we must apply.
 	middle []Middleware
@@ -337,15 +331,15 @@ type Store struct {
 }
 
 // New is the constructor for Store. initialState should be a struct that is
-// used for application's state. All Updaters in mod must return the same struct
+// used for application's state. All Modifiers in mod must return the same struct
 // that initialState contains or you will receive a panic.
-func New(initialState interface{}, mod Modifier, middle []Middleware) (*Store, error) {
+func New(initialState interface{}, mod Modifiers, middle []Middleware) (*Store, error) {
 	if err := validateState(initialState); err != nil {
 		return nil, err
 	}
 
 	if mod.updater == nil {
-		return nil, fmt.Errorf("Modfifier must contain some Updaters")
+		return nil, fmt.Errorf("mod must contain at least one Modifier")
 	}
 
 	fieldVersions := map[string]uint64{}
