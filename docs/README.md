@@ -79,7 +79,6 @@ To start with, the data to be stored must be of type struct.  Now to be clear,
 this cannot be \*struct, it must be a plain struct.  It is also important to
 note that only public fields can received notification of subscriber changes.
 
-<<<<<<< HEAD
 For this example, we are going to use part of the example application included
 with Boutique, a chat server called ChatterBox.  Users access the chat server,
 subscribing to a comm channel.  They can then send and receive messages.
@@ -123,34 +122,9 @@ type State struct {
 	Users []string
 	// Messages in the current messages.
 	Messages []Message
-=======
-For this example, we are going to use part of the example application included with Boutique, a chat server.  Users access the chat server, subscribing to a comm channel.  They can then send and receive messages.  We are going to include middleware to help debug and log all conversations. 
-
-This example is not going to include all of the application's functions, just enough to cover the basics.
-
-So let's define the data we need, which is going to be stored in state/data/data.go:
-
-```go
-// Package data holds the Store object that is used by our boutique instances.
-package data
-
-import (
-	"os"
-	"time"
-)
-
-// OpenFile contains access to a file and the last time we accessed it.
-type OpenFile struct {
-	*os.File
-
-	// LastAccess is the last time the file was accessed.
-	LastAccess time.Time
->>>>>>> origin/master
-}
 ```
 
-<<<<<<< HEAD
-So what is going on here.  First there is the State object.  This is the
+First there is the State object.  This is the
 center of our Boutique universe per say.  All changes happen to this object.
 Each comm channel that is opened for users to communicate on has its own
 State object.  
@@ -160,65 +134,6 @@ ServerID lets us identify the particular instance's log files, Channel holds
 the name of our channel.  Users is the list of current users in the Channel,
 while Messages is the current buffer of user messages waiting to be sent out
 to the users.
-
-```go
-// Message represents a message sent.
-type Message struct {
-	// ID is the ID of the message in the order it was sent.
-	ID int
-	// Timestamp is the time in which the message was written.
-	Timestamp time.Time
-	// User is the user who sent the message.
-	User string
-	// Text is the text of the message.
-	Text string
-=======
-// IsZero indicates that OpenFile has not been initialized.
-func (o OpenFile) IsZero() bool {
-	if o.File == nil {
-		return true
-	}
-	return false
-}
-
-// Message represents a message sent.
-type Message struct {
-	// ID is the ID of the message in the order it was sent, starting at 0.
-	ID int
-	// Timestamp is the time in which the message was written.
-	Timestamp time.Time
-	// User is the user who sent the message.
-	User string
-	// Text is the text of the message.
-	Text string
-}
-
-// State holds our state data for each communication channel that is open.
-type State struct {
-	// ServerID is a UUID that uniquely represents this server instance.
-	ServerID string
-
-	// Channel is the channel this represents.
-	Channel string
-	// Users are the users in the Channel.
-	Users []string
-	// Messages in the current messages.
-	Messages []Message
-
-	// LogDebug indicates to start logging debug information.
-	// LogChan indicates to log chat messages.
-	LogDebug, LogChan bool
-	// DebugFile holds access to the a debug file we opened for this channel.
-	DebugFile OpenFile
-	// ChanFile holds access to the chat log for the channel.
-	ChanFile OpenFile
->>>>>>> origin/master
-}
-
-```
-Message identifies a Message that was sent by a user.  The ID is a unique
-identifier that starts at 0 and goes up.  Timestamp is when the message was
-sent, User is who sent it, and Text is the actual message.
 
 Now that we have our data to store in Boutique, let us talk about how to
 signal a change to the store, via Actions.
