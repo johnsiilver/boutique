@@ -473,6 +473,8 @@ whenever anyone sends on the channel.
 
 ```go
 func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+  // Do some setup, including getting the lastMsgID, which is the ID of the last
+  // message we have sent the client, to prevent sending duplicates.
   ...
 
   // Subscribe to changes to the "Messages" field in our Store.
@@ -485,42 +487,20 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 
   for sig := range sigCh {
 		msgs := sig.State.Data.(data.State).Messages
-		if len(msgs) == 0 {
+		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
 			continue
 		}
 
     // Send any messages that have appeared in the store since we last sent.
     // Note: This would get ugly if we didn't delete messages after they were
-    // sent, which the application does, but we are not showing here.
-		toSend := []data.Message{}
-
-		if len(msgs) > 1 {
-      var (
-			  i   int
-			  msg data.Message
-        found bool
-      )
-      // Find the last message we sent.
-			for i, msg = range msgs {
-				if msg.ID == lastMsgID {
-          found = true
-					break
-				}
-			}
-      if found {
-				toSend = msgs[i+1:]
-				lastMsgID = toSend[len(toSend)-1].ID
-			} else {
-				toSend = msgs
-				lastMsgID = toSend[0].ID
-			}
-		} else {
-			toSend = msgs
-			lastMsgID = toSend[0].ID
-		}
+    // sent, which the application does, but we are not showing here and is done
+    // by another method.
+		var toSend []data.Message
+		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
 
     // Send our message to the client via the websocket.
     ...
+	}
 ```
 
 The first thing that happens if we subscribe to the Store's Messages field.
