@@ -4,6 +4,7 @@ package middleware
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/johnsiilver/boutique"
@@ -90,4 +91,23 @@ func (l *Logging) ChannelLog(args *boutique.MWArgs) (changedData interface{}, st
 
 	}()
 	return nil, false, nil
+}
+
+// CleanTimer is how old a message must be before it is deleted on the next Perform().
+var CleanTimer = 1 * time.Minute
+
+// CleanMessages deletes data.State.Messages older than 1 Minute.
+func CleanMessages(args *boutique.MWArgs) (changedData interface{}, stop bool, err error) {
+	defer args.WG.Done()
+
+	d := args.NewData.(data.State)
+	var newMsgs []data.Message
+	for _, m := range d.Messages {
+		if m.Timestamp.After(time.Now().Add(CleanTimer)) {
+			continue
+		}
+		newMsgs = append(newMsgs, m)
+	}
+	d.Messages = newMsgs
+	return d, false, nil
 }

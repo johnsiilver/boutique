@@ -142,6 +142,7 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 // wg when it finally ends.
 func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
 	defer wg.Done()
+
 	id := 0
 	for {
 		m, err := c.read(conn)
@@ -192,28 +193,40 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 			continue
 		}
 
-		subDone := make(chan boutique.State, 1)
-		store.Perform(a, boutique.WaitForSubscribers(subDone))
+		//subDone := make(chan boutique.State, 1)
+		if err := store.Perform(a); err != nil {
+			// TODO(jdoak): abstract sending error messages to the client into a method
+			// and then do that here.  Then continue unless there is an error.
+			glog.Infof("problem calling store.Perform(): %s", err)
+			return
+		}
+		// TODO(johnsiilver): Move this to somewhere sane
 		id++
-		go func() {
-			_ = <-subDone
-			store.Perform(actions.DeleteMessages(id-1), boutique.NoUpdate())
-		}()
+		/*
+			go func() {
+				_ = <-subDone
+				store.Perform(actions.DeleteMessages(id-1), boutique.NoUpdate())
+			}()
+		*/
 	}
 }
 
 // clientSender receives changes to the store's Messaages field and pushes them out to
 // our websocket clients.
 func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+	const field = "Messages"
 	defer wg.Done()
 
-	startState := store.State().Data.(data.State)
+	state := store.State()
+	startData := state.Data.(data.State)
+
 	var lastMsgID = -1
-	if len(startState.Messages) > 0 {
-		lastMsgID = startState.Messages[len(startState.Messages)-1].ID
+	var lastVersion uint64
+	if len(startData.Messages) > 0 {
+		lastMsgID = startData.Messages[len(startData.Messages)-1].ID
 	}
 
-	sigCh, cancel, err := store.Subscribe("Messages")
+	sigCh, cancel, err := store.Subscribe(field)
 	if err != nil {
 		glog.Error(err)
 		c.write(
@@ -230,80 +243,104 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 	defer cancel()
 
 	for sig := range sigCh {
+		if sig.State.FieldVersions[field] <= lastVersion {
+			continue
+		}
+
 		msgs := sig.State.Data.(data.State).Messages
+		lastVersion = sig.State.FieldVersions[field]
 		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
 			continue
 		}
 
-		var toSend []data.Message
-		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
+		for {
+			var toSend []data.Message
+			toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
+			if len(toSend) > 0 {
+				if err := c.sendMessages(conn, toSend); err != nil {
+					glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+					return
+				}
+			}
 
-		for _, ts := range toSend {
-			msg := messages.Server{
-				Type: messages.SMSendText,
-				User: ts.User,
-				Text: messages.Text{
-					Text: ts.Text,
-				},
+			if store.FieldVersion(field) > lastVersion {
+				state = store.State()
+				msgs = state.Data.(data.State).Messages
+				lastVersion = state.FieldVersions[field]
+				continue
 			}
-			if err := websocket.WriteJSON(conn, msg); err != nil {
-				glog.Error(err)
-				return
-			}
+			break
 		}
 	}
 }
 
-// sendThis takes the Messages in the store, locates all Messages after
+// latestMsgs takes the Messages in the store, locates all Messages after
 // lastMsgID and then returns a slice containing those Messages and the
 // new lastMsgID.
 // TODO(johnsiilver): Because these messages have ascending IDs, should probably
 // look at the first ID and determine where the lastMsgID is instead of looping.
-func (*ChatterBox) sendThis(msgs []data.Message, lastMsgID int) ([]data.Message, int) {
-	toSend := []data.Message{}
+func (*ChatterBox) latestMsgs(msgs []data.Message, lastMsgID int) ([]data.Message, int) {
+	if len(msgs) == 0 {
+		return nil, -1
+	}
 
-	if len(msgs) > 1 {
-		var (
-			i     int
-			msg   data.Message
-			found bool
-		)
-		for i, msg = range msgs {
-			if msg.ID == lastMsgID {
-				found = true
-				break
+	var (
+		toSend []data.Message
+		i      int
+		msg    data.Message
+		found  bool
+	)
+
+	for i, msg = range msgs {
+		if msg.ID == lastMsgID {
+			if i == len(msgs)-1 { // If its is the last message, then there is nothing new.
+				return nil, lastMsgID
 			}
+			found = true
+			break
 		}
-		if found {
+	}
+
+	switch found {
+	case true:
+		if len(msgs) == 1 {
+			toSend = msgs
+			lastMsgID = msgs[0].ID
+		} else {
 			toSend = msgs[i+1:]
 			lastMsgID = toSend[len(toSend)-1].ID
-		} else {
-			toSend = msgs
-			lastMsgID = toSend[0].ID
 		}
-	} else { // FYI, we always have at least one Message.
+	default: // All the messages are new, so send them all.
 		toSend = msgs
-		lastMsgID = toSend[0].ID
+		lastMsgID = toSend[len(toSend)-1].ID
 	}
 	return toSend, lastMsgID
 }
 
+// sendMessages sends a list of data.Message to the client via a Websocket.
+func (*ChatterBox) sendMessages(conn *websocket.Conn, msgs []data.Message) error {
+	for _, ts := range msgs {
+		msg := messages.Server{
+			Type: messages.SMSendText,
+			User: ts.User,
+			Text: messages.Text{
+				Text: ts.Text,
+			},
+		}
+		if err := websocket.WriteJSON(conn, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // read reads a Message off the websocket.
 func (*ChatterBox) read(conn *websocket.Conn) (messages.Client, error) {
-	messageType, p, err := conn.ReadMessage()
-	if err != nil {
+	m := messages.Client{}
+	if err := conn.ReadJSON(&m); err != nil {
 		return messages.Client{}, err
 	}
 
-	m := messages.Client{}
-
-	if messageType != websocket.TextMessage {
-		return m, fmt.Errorf("someone is sending non-binary messages")
-	}
-
-	if err := m.Unmarshal(p); err != nil {
-		return m, fmt.Errorf("init message could not be unmarshalled: %s", err)
-	}
 	return m, nil
 }
 

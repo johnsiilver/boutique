@@ -4,16 +4,19 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang/glog"
 	"github.com/johnsiilver/boutique/example/chatterbox/client"
 	"github.com/johnsiilver/boutique/example/chatterbox/server"
+	"github.com/johnsiilver/boutique/example/chatterbox/server/state/middleware"
 )
 
 func TestClientServer(t *testing.T) {
+	// Set our timer to happen faster than normal.
+	middleware.CleanTimer = 5 * time.Second
+
 	cb := server.New()
 
 	http.HandleFunc("/", cb.Handler)
@@ -35,7 +38,7 @@ func TestClientServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg := &sync.WaitGroup{}
+	waitingFor := []string{}
 	for i := 0; i < 1000; i++ {
 		i := i
 		var cli *client.ChatterBox
@@ -46,32 +49,17 @@ func TestClientServer(t *testing.T) {
 		}
 
 		text := fmt.Sprintf("%d", i)
+		waitingFor = append(waitingFor, text)
 		go func() {
 			glog.Infof("sending %s", text)
 			if err := cli.SendText(text); err != nil {
 				t.Fatal(err)
 			}
 		}()
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := waitFor(cli1, text); err != nil {
-				time.Sleep(3 * time.Second)
-				t.Fatal(err)
-			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := waitFor(cli2, text); err != nil {
-				time.Sleep(3 * time.Second)
-				t.Fatal(err)
-			}
-		}()
 	}
 
-	time.Sleep(1 * time.Second)
+	waitFor(cli1, waitingFor)
+	waitFor(cli2, waitingFor)
 }
 
 func startClient(user string) (*client.ChatterBox, error) {
@@ -100,15 +88,22 @@ func startClient(user string) (*client.ChatterBox, error) {
 	return cli, nil
 }
 
-func waitFor(cli *client.ChatterBox, text string) error {
-	select {
-	case m := <-cli.Messages:
-		if strings.TrimSpace(m.Text.Text) != text {
-			return fmt.Errorf("got %s, want %s", m.Text, text)
+func waitFor(cli *client.ChatterBox, text []string) error {
+	waiting := make(map[string]bool, len(text))
+	for _, t := range text {
+		waiting[t] = true
+	}
+
+	for {
+		if len(waiting) == 0 {
+			return nil
 		}
-		glog.Infof("waited for: %s", text)
-		return nil
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("timeout waiting for %s", text)
+		select {
+		case m := <-cli.Messages:
+			delete(waiting, strings.TrimSpace(m.Text.Text))
+			continue
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("timeout waiting for: %+v", waiting)
+		}
 	}
 }

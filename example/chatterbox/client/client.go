@@ -109,6 +109,7 @@ func New(addr string, username string) (*ChatterBox, error) {
 	return c, nil
 }
 
+// serverReceiver receives mdsssages from the ChatterBox server.
 func (c *ChatterBox) serverReceiver() {
 	for {
 		var sm messages.Server
@@ -117,6 +118,7 @@ func (c *ChatterBox) serverReceiver() {
 		case v := <-c.readConn():
 			switch t := v.(type) {
 			case error:
+				glog.Errorf("client error receiving from server, client is dead: %s", t)
 				return
 			case messages.Server:
 				sm = t
@@ -128,11 +130,12 @@ func (c *ChatterBox) serverReceiver() {
 
 		switch sm.Type {
 		case messages.SMError:
+			glog.Infof("server sent an error back: %s", sm.Text.Text)
 			c.serverErrors <- errors.New(sm.Text.Text)
 		case messages.SMSendText:
 			c.Messages <- sm
 		case messages.SMSubAck:
-			glog.Infof("here too")
+			glog.Infof("server acknowledged subscription to channel")
 			c.subscribed <- sm
 		default:
 			glog.Infof("dropping message of type %v, I don't understand the type", sm.Type)
@@ -207,11 +210,13 @@ func (c *ChatterBox) SendText(t string) error {
 		},
 	}
 	if err := msg.Validate(); err != nil {
+		glog.Errorf("client message had validation error: %s", err)
 		return err
 	}
 
 	if err := c.conn.WriteJSON(msg); err != nil {
 		return fmt.Errorf("connection to server is broken, this client is dead: %s", err)
 	}
+
 	return nil
 }
