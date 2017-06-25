@@ -473,12 +473,21 @@ whenever anyone sends on the channel.
 
 ```go
 func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
-  // Do some setup, including getting the lastMsgID, which is the ID of the last
-  // message we have sent the client, to prevent sending duplicates.
-  ...
+  const field = "Messages"
+  // lastMsgID tracks the last ID for a message we have seen. This allows us
+  // to only send messages in the queue we haven't seen before.
+  var lastMsgID = -1
+  if len(startData.Messages) > 0 {
+    lastMsgID = startData.Messages[len(startData.Messages)-1].ID
+  }
+
+  // lastVersion keeps track of the last version number of the Messages field.
+  // We need this because it is possible for the field to change between
+  // signals.
+  var lastVersion uint64
 
   // Subscribe to changes to the "Messages" field in our Store.
-  sigCh, cancel, err := store.Subscribe("Messages")
+  sigCh, cancel, err := store.Subscribe(field)
   if err != nil {
     // Send the error back on the websocket and close
     ...
@@ -486,21 +495,71 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
   defer cancel() // Stop our subscription.
 
   for sig := range sigCh {
+    // If the Signal's field version is less than what we've already seen, then
+    // just continue the loop.
+    if sig.State.FieldVersions[field] <= lastVersion {
+      continue
+    }
+
 		msgs := sig.State.Data.(data.State).Messages
+    lastVersion = sig.State.FieldVersions[field]
 		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
 			continue
 		}
 
-    // Send any messages that have appeared in the store since we last sent.
-    // Note: This would get ugly if we didn't delete messages after they were
-    // sent, which the application does, but we are not showing here and is done
-    // by another method.
-		var toSend []data.Message
-		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
+    for {
+      // Send any messages that have appeared in the store since we last sent.
+      // Note: This would get ugly if we didn't delete messages after they were
+      // sent, which the application does, but we are not showing that code
+      // here and is done in another method.
+  		var toSend []data.Message
+  		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
 
-    // Send our message to the client via the websocket.
-    ...
+      // Send our message to the client via the websocket.
+      ...
+
+      // Here we check if the "Messages" field has been updated since we got
+      // the signal. If so, we get the new State from the store and do this
+      // again, if not, we break our send loop.
+      if store.FieldVersion(field) > lastVersion {
+        state = store.State()
+        msgs = state.Data.(data.State).Messages
+        lastVersion = state.FieldVersions[field]
+        continue
+      }
+      break
+    }
 	}
+```
+
+```go
+
+for sig := range sigCh {
+  msgs := sig.State.Data.(data.State).Messages
+  lastVersion = sig.State.FieldVersions[field]
+  if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
+    continue
+  }
+
+  for {
+    var toSend []data.Message
+    toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
+    if len(toSend) > 0 {
+      if err := c.sendMessages(conn, toSend); err != nil {
+        glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+        return
+      }
+    }
+
+    if store.FieldVersion(field) > lastVersion {
+      state = store.State()
+      msgs = state.Data.(data.State).Messages
+      lastVersion = state.FieldVersions[field]
+      continue
+    }
+    break
+  }
+}
 ```
 
 The first thing that happens if we subscribe to the Store's Messages field.
