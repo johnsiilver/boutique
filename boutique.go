@@ -320,6 +320,12 @@ type Store struct {
 	// don't know the type, but it is guarenteed to be a struct.
 	state atomic.Value
 
+	// version holds the version of the store.  This will be the same as .state.Version.
+	version atomic.Value // uint64
+
+	// fieldVersions is the versions of each field. This will be teh same as .state.FieldVersions.
+	fieldVersions atomic.Value // map[string]uint64
+
 	// smu protects subscribers and sid.
 	smu sync.RWMutex
 
@@ -349,6 +355,8 @@ func New(initialState interface{}, mod Modifiers, middle []Middleware) (*Store, 
 
 	s := &Store{mod: mod, subscribers: subscribers{}, middle: middle}
 	s.state.Store(State{Version: 0, FieldVersions: fieldVersions, Data: initialState})
+	s.version.Store(uint64(0))
+	s.fieldVersions.Store(fieldVersions)
 
 	return s, nil
 }
@@ -473,6 +481,8 @@ func (s *Store) perform(state State, n interface{}, commitChans []chan State, op
 func (s *Store) write(sc stateChange, opts *performOptions) State {
 	state := State{Data: sc.new, Version: sc.newVersion, FieldVersions: sc.newFieldVersions}
 	s.state.Store(state)
+	s.version.Store(sc.newVersion)
+	s.fieldVersions.Store(sc.newFieldVersions)
 
 	if opts.noUpdate {
 		return state
@@ -520,6 +530,17 @@ func (s *Store) Subscribe(field string) (chan Signal, CancelFunc, error) {
 // State returns the current stored state.
 func (s *Store) State() State {
 	return s.state.Load().(State)
+}
+
+// Version returns the current version of the Store.
+func (s *Store) Version() uint64 {
+	return s.version.Load().(uint64)
+}
+
+// FieldVersion returns the current version of field "f". If "f" doesn't exist,
+// the default value 0 will be returned.
+func (s *Store) FieldVersion(f string) uint64 {
+	return s.fieldVersions.Load().(map[string]uint64)[f]
 }
 
 // cast updates subscribers for data changes.
