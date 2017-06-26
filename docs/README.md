@@ -532,7 +532,7 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 for sig := range sigCh {
   msgs := sig.State.Data.(data.State).Messages
   lastVersion = sig.State.FieldVersions[field]
-  if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
+  if len(msgs) == 0 {
     continue
   }
 
@@ -603,6 +603,129 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 
 Now we simply read messages off the websocket.Conn object, update our Store
 with an actions.SendMessage(), and all of our clients are magically updated!
+
+### Middleware
+
+#### Introduction
+Middleware allows you to extend the Store by inserting data handlers into
+the Perform() calls either before the commit to the Store or after the data
+has been committed.
+
+Middleware can:
+
+* Change store data as an update passed through.
+* Deny an update.
+* Signal or spin off other async calls
+* See the end result of the change
+
+A few example middleware applications:
+
+* Log all State changes for debug purposes
+* Write certain data changes to storage
+* Authorize/Deny changes
+* Update certain fields in conjunction with the update type
+* Provide cleanup mechanisms for certain fields
+* ...
+
+#### Defining Middleware
+Middleware is simply a function/method that implements the following signature:
+
+```go
+type Middleware func(args *MWArgs) (changedData interface{}, stop bool, err error)
+```
+
+Let's talk first about the args that are provided:
+
+```go
+type MWArgs struct {
+	// Action is the Action that is being performed.
+	Action Action
+	// NewDate is the proposed new State.Data field in the Store. This can be modified by the
+	// Middleware and returned as the changedData return value.
+	NewData interface{}
+	// GetState if a function that will return the current State of the Store.
+	GetState GetState
+	// Committed is only used if the Middleware will spin off a goroutine.  In that case,
+	// the committed state will be sent via this channel. This allows Middleware that wants
+	// to do something based on the final state (like logging) to work.  If the data was not
+	// committed due to another Middleware cancelling the commit, State.IsZero() will be true.
+	Committed chan State
+
+	// WG must have .Done() called by all Middleware once it has finished. If using Committed, you must
+	// not call WG.Done() until your goroutine is completed.
+	WG *sync.WaitGroup
+}
+```
+
+So first we have Action.  By observing the Action.Type, you can see what the
+Action was that Perform() was called with.  Altering this has no effect.
+
+NewData is the NewData will result State.Data from the Action.  It has not
+been committed. Alerting this by itself will have no effect, but I will show
+how to alter it in a moment and affect a change.
+
+GetState is actually a function that you can call to get the current State
+object.
+
+Let's skip Committed for the moment, we'll get back to it later.
+
+WG is very important.  Your Middleware must call WG.Done() before exiting or
+your Perform() call will block forever.  There is a handy log message that
+catches these if your forget during development.
+
+Now that we have args out of the way, let's talk about the return values:
+
+```go
+(changedData interface{}, stop bool, err error)
+```
+
+changedData represents the State.Data you want to change. If you are not going
+to edit the data, then you can simply return nil here.  Otherwise you may
+modify args.NewData and then return it here to affect your change.
+
+stop is an indicator that you want to prevent other Middleware from executing
+and immediately commit the change.
+
+err indicates you wish to prevent the change and send an error to the Perform()
+caller.
+
+#### A synchronous Middleware
+
+So let's design a synchronous Middleware that cleans up older Messages in our
+example application. This will be synchronous because we do this before our
+Perform is completed.
+
+```go
+// CleanMessages deletes data.State.Messages older than 1 Minute.
+func CleanMessages(args *boutique.MWArgs) (changedData interface{}, stop bool, err error) {
+	// Remember to do this, otherwise the Middleware will block a Perform() call.
+	defer args.WG.Done()
+
+	d := args.NewData.(data.State) // type assert it to the correct type.
+
+	var (
+		i int
+		m data.Message
+	)
+	for i, m = range d.Messages {
+		if m.Timestamp.After(time.Now().Add(1 * time.Minute)) {
+			continue
+		}
+	}
+	switch {
+	case i == 0:
+		return nil, false, nil
+
+	case len(d.Messages[i:]) > 0:
+		newMsg := make([]data.Message, len(d.Messages[i:]))
+		copy(newMsg, d.Messages[i:])
+		d.Messages = newMsg
+	default:
+		d.Messages = []data.Message{}
+	}
+	return d, false, nil
+}
+```
 
 ## Previous works
 
