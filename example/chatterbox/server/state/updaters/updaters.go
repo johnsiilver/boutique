@@ -17,7 +17,10 @@ func SendMessage(state interface{}, action boutique.Action) interface{} {
 
 	switch action.Type {
 	case actions.ActSendMessage:
-		s.Messages = boutique.CopyAppendSlice(s.Messages, action.Update).([]data.Message)
+		msg := action.Update.(data.Message)
+		msg.ID = s.NextMsgID
+		s.Messages = boutique.CopyAppendSlice(s.Messages, msg).([]data.Message)
+		s.NextMsgID = s.NextMsgID + 1
 	}
 	return s
 }

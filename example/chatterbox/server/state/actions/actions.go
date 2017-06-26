@@ -21,11 +21,11 @@ const (
 )
 
 // SendMessage sends a message via the store.
-func SendMessage(id int, user string, s string) (boutique.Action, error) {
+func SendMessage(user string, s string) (boutique.Action, error) {
 	if len(s) > 500 {
 		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
 	}
-	m := data.Message{ID: id, Timestamp: time.Now(), User: user, Text: s}
+	m := data.Message{Timestamp: time.Now(), User: user, Text: s}
 	return boutique.Action{Type: ActSendMessage, Update: m}, nil
 }
 

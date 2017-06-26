@@ -143,7 +143,6 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
 	defer wg.Done()
 
-	id := 0
 	for {
 		m, err := c.read(conn)
 		if err != nil {
@@ -174,7 +173,7 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 			continue
 		}
 
-		a, err := actions.SendMessage(id, usr, m.Text.Text)
+		a, err := actions.SendMessage(usr, m.Text.Text)
 		if err != nil {
 			glog.Errorf("error sending message to client: %s", err)
 			err := c.write(
@@ -200,14 +199,6 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 			glog.Infof("problem calling store.Perform(): %s", err)
 			return
 		}
-		// TODO(johnsiilver): Move this to somewhere sane
-		id++
-		/*
-			go func() {
-				_ = <-subDone
-				store.Perform(actions.DeleteMessages(id-1), boutique.NoUpdate())
-			}()
-		*/
 	}
 }
 
@@ -248,28 +239,17 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 		}
 
 		msgs := sig.State.Data.(data.State).Messages
-		lastVersion = sig.State.FieldVersions[field]
 		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
 			continue
 		}
 
-		for {
-			var toSend []data.Message
-			toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
-			if len(toSend) > 0 {
-				if err := c.sendMessages(conn, toSend); err != nil {
-					glog.Errorf("error sending message to client on channel %s: %s", chName, err)
-					return
-				}
+		var toSend []data.Message
+		toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
+		if len(toSend) > 0 {
+			if err := c.sendMessages(conn, toSend); err != nil {
+				glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+				return
 			}
-
-			if store.FieldVersion(field) > lastVersion {
-				state = store.State()
-				msgs = state.Data.(data.State).Messages
-				lastVersion = state.FieldVersions[field]
-				continue
-			}
-			break
 		}
 	}
 }

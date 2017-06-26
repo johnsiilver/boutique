@@ -45,6 +45,8 @@ type State struct {
 	Users []string
 	// Messages in the current messages.
 	Messages []Message
+	// NextMsgID is the ID of the next message to be sent.
+	NextMsgID int
 
 	// LogDebug indicates to start logging debug information.
 	// LogChan indicates to log chat messages.
