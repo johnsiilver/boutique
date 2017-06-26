@@ -101,13 +101,26 @@ func CleanMessages(args *boutique.MWArgs) (changedData interface{}, stop bool, e
 	defer args.WG.Done()
 
 	d := args.NewData.(data.State)
-	var newMsgs []data.Message
-	for _, m := range d.Messages {
-		if m.Timestamp.After(time.Now().Add(CleanTimer)) {
+
+	var (
+		i int
+		m data.Message
+	)
+	for i, m = range d.Messages {
+		if m.Timestamp.After(time.Now().Add(1 * time.Minute)) {
 			continue
 		}
-		newMsgs = append(newMsgs, m)
 	}
-	d.Messages = newMsgs
+	switch {
+	case i == 0:
+		return nil, false, nil
+
+	case len(d.Messages[i:]) > 0:
+		newMsg := make([]data.Message, len(d.Messages[i:]))
+		copy(newMsg, d.Messages[i:])
+		d.Messages = newMsg
+	default:
+		d.Messages = []data.Message{}
+	}
 	return d, false, nil
 }
