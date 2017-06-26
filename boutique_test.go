@@ -3,6 +3,7 @@ package boutique
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -239,7 +240,10 @@ func subscribeSignalsCorrectly(t *testing.T) {
 		List:    []string{},
 		Dict:    map[string]bool{},
 	}
-	freeze.Object(&initial)
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		freeze.Object(&initial)
+	}
 
 	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
@@ -322,7 +326,10 @@ func signalsDontBlock(t *testing.T) {
 		List:    []string{},
 		Dict:    map[string]bool{},
 	}
-	freeze.Object(&initial)
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		freeze.Object(&initial)
+	}
 
 	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
@@ -340,10 +347,14 @@ func signalsDontBlock(t *testing.T) {
 	// time.Sleep() things are prone to break, but I don't want to have to put a
 	// signaling mechanism to know when the go cast() of finished.
 	time.Sleep(1 * time.Second)
+
+	// Remove two items, as there is a buffer of 1.
 	<-ch
+	<-ch
+
 	select {
 	case <-ch:
-		t.Errorf("signalsDontBlock: got <-ch had something on it, want <-ch to block")
+		t.Errorf("signalsDontBlock: got <-blocked had something on it, want <-block to block")
 	default:
 	}
 }
@@ -432,7 +443,10 @@ func TestPerform(t *testing.T) {
 		List:    []string{},
 		Dict:    map[string]bool{},
 	}
-	freeze.Object(&initial)
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		freeze.Object(&initial)
+	}
 
 	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
 	if err != nil {
@@ -573,4 +587,56 @@ func TestMiddleware(t *testing.T) {
 	if diff := pretty.Compare(logs, wantLogs); diff != "" {
 		t.Errorf("Test TestMiddleware: -want/+got:\n%s", diff)
 	}
+}
+
+func TestSignaler(t *testing.T) {
+	glog.Infof("TestSignaler")
+	sig := newsignaler()
+	ch := sig.ch()
+
+	sig.insert(Signal{Version: 0})
+	sig.insert(Signal{Version: 1})
+	sig.insert(Signal{Version: 2})
+	sig.insert(Signal{Version: 3})
+
+	v := <-ch
+	if v.Version != 0 {
+		t.Fatalf("TestSignaler: got .Version %d, want %d", v.Version, 0)
+	}
+
+	v = <-ch
+	if v.Version != 3 {
+		t.Fatalf("TestSignaler: got .Version %d, want %d", v.Version, 3)
+	}
+
+	select {
+	case v := <-ch:
+		t.Fatalf("TestSignaler: got <-ch returned instead of it blocking: %+v", v)
+	case <-time.After(1 * time.Second):
+	}
+
+	sig.insert(Signal{Version: 3})
+
+	select {
+	case <-ch:
+	case <-time.After(1 * time.Second):
+		t.Errorf("TestSignaler: got blocked on <-ch, expected returned value")
+	}
+
+	// To help detect syncromization problems under the race detector.
+	wg := &sync.WaitGroup{}
+	for i := 0; i < 1000; i++ {
+		i := i
+
+		// TODO(jdoak): Something wrong here.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sig.insert(Signal{Version: uint64(i)})
+		}()
+		go func() {
+			<-ch
+		}()
+	}
+	wg.Wait()
 }
