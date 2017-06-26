@@ -181,11 +181,12 @@ const (
 )
 
 // SendMessage sends a message via the store.
-func SendMessage(id int, user string, s string) (boutique.Action, error) {
-	if len(s) > 500 {
+func SendMessage(user string, s string) (boutique.Action, error) {
+	f len(s) > 500 {
 		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
 	}
-	return boutique.Action{Type: ActSendMessage, Update: data.Message{ID: id, Timestamp: time.Now(), User: user, Text: s}}, nil
+	m := data.Message{Timestamp: time.Now(), User: user, Text: s}
+	return boutique.Action{Type: ActSendMessage, Update: m}, nil
 }
 
 // AddUser adds a user to the store, indicating a new user is in the room.
@@ -215,10 +216,11 @@ Now we have our Action creators:
 ```go
 // SendMessage sends a message via the store.
 func SendMessage(id int, user string, s string) (boutique.Action, error) {
-	if len(s) > 500 {
+	f len(s) > 500 {
 		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
 	}
-	return boutique.Action{Type: ActSendMessage, Update: data.Message{ID: id, Timestamp: time.Now(), User: user, Text: s}}, nil
+	m := data.Message{Timestamp: time.Now(), User: user, Text: s}
+	return boutique.Action{Type: ActSendMessage, Update: m}, nil
 }
 
 // AddUser adds a user to the store, indicating a new user is in the room.
@@ -227,10 +229,10 @@ func AddUser(u string) boutique.Action {
 }
 ```
 
-SendMessage takes in the ID of a message, the user sending it, and the text
+SendMessage takes in the user sending the message, and the text
 message itself.  It validates the text message is the right size, or returns
 an error (we could have done this validation via Middleware as well).  It then
-creates a boutique.Action setting the type to ActSendMessage and the Update
+creates a boutique.Action setting the Type to ActSendMessage and the Update
 to the Message type, which we will use to update our store.
 
 Now, we have Actions that describe the changes we want to do, but how do we
@@ -248,23 +250,26 @@ type Modifier func(state interface{}, action Action) interface{}
 
 The "state" is the data object that will get updated.  In our case,
 this would be data.State that we defined in package data.  "action" is the
-boutique.Action that is to be processed.  An Modifier does NOT have to handle an
-Action, it only has to handle the Actions for which it recognizes.  If it
-does not recognize the action.Type, it should simply return state as it was
-passed.  Otherwise Modifier returns the updated state object.
+boutique.Action that is to be processed.  An Modifier does NOT have to handle a
+specific Action Type, it only has to handle the Actions it is designed to
+ecognizes. If it does not recognize the action.Type, it should simply return
+state as it was passed.  Otherwise Modifier returns the updated state object.
 
 There is a fundamental rule that MUST be obeyed by all Modifiers:
 
 THOU SHALL NOT MUTATE DATA!
 
-Non-reference or pointer values can be changed directly.  But reference types
-or pointer values must be copied and replaced, but never modified.  
+Non-references can be changed directly.  But reference types
+or pointer values must be copied and replaced, never modified.  
 This allows downstream readers to ignore locking.
 
 So if you want to add a value to a slice, you must copy the slice, add the
 new value, then change the reference in the Store.  You must never directly
 append.  This is relatively fast on modern processors when data fits in the
 cache.
+
+The only exception to this is synchronization Types that can be copied, such
+as a channel or \*sync.WaitGroup.  Do this sparingly!
 
 Here are some Modifiers to handle our Actions.  We could write one Modifier to
 handle all Actions or multiple Modifiers handling each individual Actions.
@@ -280,7 +285,10 @@ func SendMessage(state interface{}, action boutique.Action) interface{} {
 
 	switch action.Type {
 	case actions.ActSendMessage:
-		s.Messages = boutique.CopyAppendSlice(s.Messages, actions.Update).([]data.Message)
+		msg := action.Update.(data.Message)
+		msg.ID = s.NextMsgID
+		s.Messages = boutique.CopyAppendSlice(s.Messages, msg).([]data.Message)
+		s.NextMsgID = s.NextMsgID + 1
 	}
 	return s
 }
@@ -502,33 +510,20 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
     }
 
 		msgs := sig.State.Data.(data.State).Messages
-    lastVersion = sig.State.FieldVersions[field]
-		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
+
+		if len(msgs) == 0 {
 			continue
 		}
 
-    for {
-      // Send any messages that have appeared in the store since we last sent.
-      // Note: This would get ugly if we didn't delete messages after they were
-      // sent, which the application does, but we are not showing that code
-      // here and is done in another method.
-  		var toSend []data.Message
-  		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
+    // Send any messages that have appeared in the store since we last sent.
+    // Note: This would get ugly if we didn't delete messages after they were
+    // sent, which the application does, but we are not showing that code
+    // here and is done in another method.
+		var toSend []data.Message
+		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
 
-      // Send our message to the client via the websocket.
-      ...
-
-      // Here we check if the "Messages" field has been updated since we got
-      // the signal. If so, we get the new State from the store and do this
-      // again, if not, we break our send loop.
-      if store.FieldVersion(field) > lastVersion {
-        state = store.State()
-        msgs = state.Data.(data.State).Messages
-        lastVersion = state.FieldVersions[field]
-        continue
-      }
-      break
-    }
+    // Send our message to the client via the websocket.
+    ...
 	}
 ```
 
