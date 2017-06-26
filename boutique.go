@@ -625,8 +625,13 @@ func (s *Store) write(sc stateChange, opts *performOptions) State {
 // Subscribe creates a subscriber to be notified when a field is updated.
 // The notification comes over the returned channel.  If the field is set to
 // the Any enumerator, any field change in the state data sends an update.
-// CancelFunc() can be called to cancel the subscription. On cancel, Signal
-// will be closed.
+// CancelFunc() can be called to cancel the subscription. On cancel, chan Signal
+// will be closed after the last entry is pulled from the channel.
+// The returned channel is guarenteed to have the latest data at the time the
+// Signal is returned. If you pull off the channel slower than the sender,
+// you will still receive the latest data when you pull off the channel.
+// It is not guarenteed that you will see every update, only the latest.
+// If you need every update, you need to write middleware.
 func (s *Store) Subscribe(field string) (chan Signal, CancelFunc, error) {
 	if field != Any && !publicRE.MatchString(field) {
 		return nil, nil, fmt.Errorf("cannot subscribe to a field that is not public: %s", field)
