@@ -23,7 +23,7 @@ changes to the store.
 Boutique is useful for things like:
 
 * A web based application that stores state on the server and not in
-Javascript clients.
+Javascript clients. I like to use it instead of Redux.
 * An application has lots of clients, each which need to store state and
 receive updates.
 * An application that has clients sharing a single state with updates pushed
@@ -893,4 +893,8 @@ l.lastData = state
 
 ## Previous works
 
-Boutique is based on the Redux library: [http://redux.js.org](http://redux.js.org)
+Boutique has its origins from the Redux library: [http://redux.js.org](http://redux.js.org)
+
+Redux is very useful for Javascript clients that need to store state. However,
+while Redux is great, its still Javascript.  Boutique extends the idea for the
+server side with a much strong subscription model for updating listeners.
