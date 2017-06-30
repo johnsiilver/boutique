@@ -29,7 +29,7 @@ func New(channelName string) (*Hub, error) {
 		Messages: make([]data.Message, 0, 10),
 	}
 
-	mw := []boutique.Middleware{middleware.CleanMessages, l.DebugLog, l.ChannelLog}
+	mw := []boutique.Middleware{middleware.CleanMessages, middleware.EnforceMsgLength, l.DebugLog, l.ChannelLog}
 
 	s, err := boutique.New(d, updaters.Modifiers, mw)
 	if err != nil {

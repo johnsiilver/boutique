@@ -2,7 +2,6 @@
 package actions
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/johnsiilver/boutique"
@@ -11,7 +10,7 @@ import (
 
 const (
 	// ActSendMessage indicates we want to send a message via the store.
-	ActSendMessage = iota
+	ActSendMessage boutique.ActionType = iota
 	// ActDeleteMessages indicates we want to delete messages from the store.
 	ActDeleteMessages
 	// ActAddUser indicates the Action wants to add a user to the store.
@@ -21,12 +20,9 @@ const (
 )
 
 // SendMessage sends a message via the store.
-func SendMessage(user string, s string) (boutique.Action, error) {
-	if len(s) > 500 {
-		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
-	}
+func SendMessage(user string, s string) boutique.Action {
 	m := data.Message{Timestamp: time.Now(), User: user, Text: s}
-	return boutique.Action{Type: ActSendMessage, Update: m}, nil
+	return boutique.Action{Type: ActSendMessage, Update: m}
 }
 
 // DeleteMessages deletes messages in our .Messages slice from the front until

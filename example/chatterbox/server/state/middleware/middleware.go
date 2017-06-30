@@ -35,7 +35,7 @@ type Logging struct {
 // DebugLog implements boutique.Middleware.
 func (l *Logging) DebugLog(args *boutique.MWArgs) (changedData interface{}, stop bool, err error) {
 	go func() {
-		defer args.WG.Done() // Signal when we are done. Not doing this will caused the program to stall.
+		defer args.WG.Done()
 		state := <-args.Committed
 		if state.IsZero() { // This indicates that another middleware killed the commit.  No need to log.
 			return
@@ -103,24 +103,41 @@ func CleanMessages(args *boutique.MWArgs) (changedData interface{}, stop bool, e
 	d := args.NewData.(data.State)
 
 	var (
-		i int
-		m data.Message
+		i         int
+		m         data.Message
+		deleteAll = true
+		now       = time.Now()
 	)
 	for i, m = range d.Messages {
-		if m.Timestamp.After(time.Now().Add(1 * time.Minute)) {
-			continue
+		if now.Sub(m.Timestamp) < CleanTimer {
+			deleteAll = false
+			break
 		}
 	}
+
 	switch {
 	case i == 0:
 		return nil, false, nil
-
+	case deleteAll:
+		d.Messages = []data.Message{}
 	case len(d.Messages[i:]) > 0:
 		newMsg := make([]data.Message, len(d.Messages[i:]))
 		copy(newMsg, d.Messages[i:])
 		d.Messages = newMsg
-	default:
-		d.Messages = []data.Message{}
 	}
 	return d, false, nil
+}
+
+// EnforceMsgLength tests that an actions.ActSendMessage does not contain a
+// message longer than 500 characters.
+func EnforceMsgLength(args *boutique.MWArgs) (changedData interface{}, stop bool, err error) {
+	defer args.WG.Done()
+
+	if args.Action.Type == actions.ActSendMessage {
+		m := args.Action.Update.(data.Message)
+		if len(m.Text) > 500 {
+			return nil, false, fmt.Errorf("cannot send a Message > 500 characters")
+		}
+	}
+	return nil, false, nil
 }

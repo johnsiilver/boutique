@@ -157,26 +157,7 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 		err = m.Validate()
 		if err != nil {
 			glog.Error(err)
-			err := c.write(
-				conn,
-				messages.Server{
-					Type: messages.SMError,
-					Text: messages.Text{
-						Text: err.Error(),
-					},
-				},
-			)
-			if err != nil {
-				glog.Errorf("problem writing to %s: %s", chName, err)
-				return
-			}
-			continue
-		}
-
-		a, err := actions.SendMessage(usr, m.Text.Text)
-		if err != nil {
-			glog.Errorf("error sending message to client: %s", err)
-			err := c.write(
+			err = c.write(
 				conn,
 				messages.Server{
 					Type: messages.SMError,
@@ -193,7 +174,7 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 		}
 
 		//subDone := make(chan boutique.State, 1)
-		if err := store.Perform(a); err != nil {
+		if err := store.Perform(actions.SendMessage(usr, m.Text.Text)); err != nil {
 			// TODO(jdoak): abstract sending error messages to the client into a method
 			// and then do that here.  Then continue unless there is an error.
 			glog.Infof("problem calling store.Perform(): %s", err)
