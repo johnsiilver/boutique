@@ -18,6 +18,19 @@ Finally, Boutique supports middleware for any change that is being committed
 to the store.  This allows for sets of features, such as a storage record of
 changes to the store.
 
+## Best use cases?
+
+Boutique is useful for things like:
+
+* A web based application that stores state on the server and not in
+Javascript clients.
+* An application has lots of clients, each which need to store state and
+receive updates.
+* An application that has clients sharing a single state with updates pushed
+to all clients.
+* An application that needs to store a single state and send changes to
+clients or go-routines.
+
 ## Before we get started
 
 ### Go doesn't have immutable objects, does it?
@@ -27,14 +40,15 @@ such as strings and constants.  However, immutability in this case is simply a
 contract to only change the data through the Boutique store.  All changes in
 the store must copy the data before committing the changes.
 
-We will cover how this works later.
+On Unix based systems, it is possible to test your code to ensure no mutations.
+I have seen no way to do this for Windows.
 
 ## What is the cost of using a generic immutable store?
 
 There are three main drawbacks for using Boutique:
 
 * Boutique writes are slower than a non generic implementation due to type
-assertion,  reflection and data copies
+assertion, reflection and data copies
 * In very certain circumstances, Boutique can have runtime errors due to using
 interface{}
 * Storage updates are done via Actions, which adds some complexity
@@ -47,29 +61,16 @@ synchronization and reduced complexity in the subscription model.
 The second, runtime errors, happen when one of two events occur.  The type of
 data to be stored in Boutique is changed on a write.  The first data passed to
 the store is the only type that can be stored.  Any attempt to store a different
-type of data will be result in an error.  The second way is if the data being
+type of data will result in an error.  The second way is if the data being
 stored in Boutique is not a struct type.  The top level data must be a struct.  
 In a non-generic store, these would be caught by the compiler.  But these are
-easy to avoid.
+easy to avoid and are generally a non-issue.
 
 The third is more difficult.  Changes are routed through Actions.  Actions
 trigger Modifers, which also must be written.  The concepts take a bit to
 understand and you have to be careful to copy the data and not mutate the data
-when writing Modifiers.   This adds a certain amount of complexity, but changes
-to the store are easily readable from a readability perspective.
-
-## Best use cases?
-
-Boutique is useful in the following scenarios:
-
-* You want a web based application to store state on the server and not in
-Javascript clients.  Keep the client as a simple renderer of data changes
-sent from the server.
-* Your application has lots of clients, each which need to store state and
-receive updates.
-* You have an application that needs to store a single state and send changes to
-clients or go-routines.  However, be aware that Boutique has runtime costs and
-may not be appropriate if every nanosecond counts.
+when writing Modifiers.   This adds a certain amount of complexity. But once
+you get used to it, its very easy to follow.
 
 ## Let's get started!
 
@@ -81,7 +82,8 @@ note that only public fields can received notification of subscriber changes.
 
 For this example, we are going to use part of the example application included
 with Boutique, a chat server called ChatterBox.  Users access the chat server,
-subscribing to a comm channel.  They can then send and receive messages.
+subscribing to a comm channel.  They can then send and receive messages which
+other users of the comm channel can see.
 We are going to include middleware to help debug and log all conversations.
 
 This example is not going to include all of the application's functions, just
@@ -152,7 +154,7 @@ This may be a value that will be placed in a field, a key that will be deleted
 from a map, or whatever is needed.
 
 Its important that you understand that this simply signals a change, it does
-not make a change.  You don't always need Update, because sometimes the signal
+not make a change.  You don't always need .Update, because sometimes the signal
 via Type is enough.  Say you had a field, Version, that needed to be
 incremented.  It would simply be enough to pass an Action with type
 ActVerIncr.  
@@ -160,11 +162,11 @@ ActVerIncr.
 But often times, you need to do more, such as change a value, merge two
 structs, etc.  That is when Update is used, to pass the value.
 
-Here I'm going to include a smaller version of the actions from our example
+Here I'm going to include a smaller version of the actions.go from our example
 application, to keep it simple.
 
 ```go
-// Package actions details boutique.Actions that are used by modifiers to modify the store.
+// Package actions details boutique.Actions that are used by Modifiers to modify the store.
 package actions
 
 import (
@@ -175,21 +177,18 @@ import (
 
 const (
 	// ActSendMessage indicates we want to send a message via the store.
-	ActSendMessage = iota
+	ActSendMessage boutique.ActionType = iota
 	// ActAddUser indicates the Action wants to add a user to the store.
 	ActAddUser
 )
 
 // SendMessage sends a message via the store.
-func SendMessage(user string, s string) (boutique.Action, error) {
-	f len(s) > 500 {
-		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
-	}
+func SendMessage(user string, s string) boutique.Action {
 	m := data.Message{Timestamp: time.Now(), User: user, Text: s}
 	return boutique.Action{Type: ActSendMessage, Update: m}, nil
 }
 
-// AddUser adds a user to the store, indicating a new user is in the room.
+// AddUser adds a user to the store, indicating a new user is in the comm channel.
 func AddUser(u string) boutique.Action {
 	return boutique.Action{Type: ActAddUser, Update: u}
 }
@@ -200,7 +199,7 @@ Let's talk about the constants we defined:
 ```go
 const (
 	// ActSendMessage indicates we want to send a message via the store.
-	ActSendMessage = iota
+	ActSendMessage boutique.ActionType = iota
 	// ActAddUser indicates the Action wants to add a user to the store.
 	ActAddUser
 )
@@ -215,10 +214,7 @@ Now we have our Action creators:
 
 ```go
 // SendMessage sends a message via the store.
-func SendMessage(id int, user string, s string) (boutique.Action, error) {
-	f len(s) > 500 {
-		return boutique.Action{}, fmt.Errorf("cannot send a message of more than 500 characters")
-	}
+func SendMessage(id int, user string, s string) boutique.Action {
 	m := data.Message{Timestamp: time.Now(), User: user, Text: s}
 	return boutique.Action{Type: ActSendMessage, Update: m}, nil
 }
@@ -230,10 +226,8 @@ func AddUser(u string) boutique.Action {
 ```
 
 SendMessage takes in the user sending the message, and the text
-message itself.  It validates the text message is the right size, or returns
-an error (we could have done this validation via Middleware as well).  It then
-creates a boutique.Action setting the Type to ActSendMessage and the Update
-to the Message type, which we will use to update our store.
+message itself. It creates a boutique.Action setting the Type to ActSendMessage
+and the Update to a data.Message, which we will use to update our store.
 
 Now, we have Actions that describe the changes we want to do, but how do we
 make those changes?  
@@ -588,14 +582,7 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
     // Get a client message from the websocket.Conn
     ...
 
-    a, err := actions.SendMessage(usr, m.Text.Text)
-		if err != nil {
-      // Send the error back to the websocket client.
-      ...
-      continue
-    }
-
-    if err := store.Perform(a); err != nil {
+    if err := store.Perform(actions.SendMessage(usr, m.Text.Text)); err != nil {
       // Send the error back to the websocket client.
     }
   }
@@ -701,31 +688,208 @@ func CleanMessages(args *boutique.MWArgs) (changedData interface{}, stop bool, e
 	// Remember to do this, otherwise the Middleware will block a Perform() call.
 	defer args.WG.Done()
 
-	d := args.NewData.(data.State) // type assert it to the correct type.
+	d := args.NewData.(data.State)  // Assert the data to the correct type.
 
 	var (
-		i int
-		m data.Message
+		i         int
+		m         data.Message
+		deleteAll = true
+		now     = time.Now()
 	)
+
+	// Find the first message that is within our expiring time.
+	// Every message after that is still good.
 	for i, m = range d.Messages {
-		if m.Timestamp.After(time.Now().Add(1 * time.Minute)) {
-			continue
+		if now.Sub(m.Timestamp) < CleanTimer {
+			deleteAll = false
+			break
 		}
 	}
+
 	switch {
+	// Nothing should be changed, so return nil for the changedData.
 	case i == 0:
 		return nil, false, nil
-
+	// Looks like all the Messages are expired, so kill them.
+	case deleteAll:
+		d.Messages = []data.Message{}
+	// Copy the non-expired Messages into a new slice and then assign it to our
+	// new data.State object.
 	case len(d.Messages[i:]) > 0:
 		newMsg := make([]data.Message, len(d.Messages[i:]))
 		copy(newMsg, d.Messages[i:])
 		d.Messages = newMsg
-	default:
-		d.Messages = []data.Message{}
 	}
+	// Return our altered data.State object.
 	return d, false, nil
 }
 ```
+
+First thing: defer our args.WG.Done() call!  Not doing this will cause problems.
+
+Next we need to go through our []data.Message until we locate the first index
+that is within our time limit.  Anything from there till the end of our slice
+does not need to be deleted.
+
+```go
+
+for i, m = range d.Messages {
+	if now.Sub(m.Timestamp) < CleanTimer {
+		deleteAll = false
+		break
+	}
+}
+```
+deleteAll simply lets us know if we find any Message not expired.  If we don't,
+we delete all messages.
+
+Finally our switch statement handles all our cases.  Most are self explanatory,
+but there is one that we should look at:
+
+```go
+case len(d.Messages[i:]) > 0:
+	newMsg := make([]data.Message, len(d.Messages[i:]))
+	copy(newMsg, d.Messages[i:])
+	d.Messages = newMsg
+```
+
+Here we copy the data from the slice into a new slice, though that isn't
+strictly necessary. Middleware is run after Modifiers, so all this data is a
+copy already.  However, not doing so will make the slice smaller, but the
+underlying array will continue to grow.  Your len() may be 0, but your
+capacity might be 50,000.  Not what you want in a cleanup Middleware!
+
+#### Asynchronous Middleware
+
+Asynchronous Middleware is useful when you want to trigger something to happen
+or view the final committed data.  However, it comes with the limitation that
+you cannot alter the data.
+
+ * Trigger third-party code and you don't need to modify data
+ * You want to trigger something to happen after the commit to the store occurs
+
+ The key here is that no matter what, Asynchronous Middleware cannot alter
+ the data.
+
+Let's create some Middleware that can be turned on or off at anytime and lets us
+record a diff of our Store on each commit.
+
+```go
+var pConfig = &pretty.Config{
+	Diffable: true,
+
+	// Field and value options
+	IncludeUnexported:   false,
+	PrintStringers:      true,
+	PrintTextMarshalers: true,
+}
+
+type Logging struct {
+	lastData boutique.State
+	file *os.File
+}
+
+func NewLogging(fName string) (*Logging, error) {
+	f, err := os.OpenFile(fName, os.O_WRONLY+ os.O_CREATEflag, 0664)
+	if err != nil {
+		return nil, err
+	}
+	return &Logging{file: f}, nil
+}
+
+func (l *Logging) DebugLog(args *boutique.MWArgs) (changedData interface{}, stop bool, err error) {
+	go func() { // Set off our Asynchronous method.
+		defer args.WG.Done() // Signal when we are done. Not doing this will caused the program to stall.
+
+		state := <-args.Committed // Wait for our data to get committed.
+
+		if state.IsZero() { // This indicates that another middleware killed the commit.  No need to log.
+			return
+		}
+
+		d := state.Data.(data.State) // Typical type assertion.
+
+		_, err := l.file.WriteString(fmt.Sprintf("%s\n\n", pConfig.Compare(l.lastData, state)))
+		if err != nil {
+			glog.Errorf("problem writing to debug file: %s", err)
+			return
+		}
+		l.lastData = state
+	}()
+
+	return nil, false, nil // Don't change any data and let other Middleware execute.
+}
+```
+
+So let's break this down, starting with pConfig.
+
+I need something to diff the Store, and in this case I've decided to use the
+pretty library by Kyle Lemons. I love this library for diffs and it gives
+a lot of control on how things are diffed.  You can find it here:
+
+"github.com/kylelemons/godebug/pretty"
+
+Next we need to setup our Logger.  If the user starts the server with debug
+logging turned on, we include this in our Middleware. If not we don't.
+
+```go
+type Logging struct {
+	lastData boutique.State
+	file *os.File
+}
+```
+
+Here we are storing the last state we saw the boutique Store in and the file
+that we are going to write our logs to.
+
+Let's skip on down to the nitty gritty, shall we?
+
+```go
+defer args.WG.Done()
+go func() { // Set off our Asynchronous method.
+	state := <-args.Committed // Wait for our data to get committed.
+
+	if state.IsZero() { // This indicates that another middleware killed the commit.  No need to log.
+		return
+	}
+
+	d := state.Data.(data.State) // Typical type assertion.
+
+	_, err := l.file.WriteString(fmt.Sprintf("%s\n\n", pConfig.Compare(l.lastData, state)))
+	if err != nil {
+		glog.Errorf("problem writing to debug file: %s", err)
+		return
+	}
+	l.lastData = state
+}()
+```
+
+First thing we on is kick off our Middleware into async mode with a goroutine.
+If we didn't need to wait for the data to be committed, we would simply do the
+```go
+args.WG.Done()
+```
+immediately before the goroutine.  But we need to keep ordering intact for
+proper logging, so we don't want multiple Process() calls to occur.
+
+Next, we finally use that args.Committed channel.  
+```go
+state := <-args.Committed
+```
+This channel will return the committed state right after it is committed to the
+store.  Now we have the data we need to write a diff to a file.
+
+Finally we simply write out the diff of the Store to disk and update our
+.lastData attribute.
+```go
+_, err := l.file.WriteString(fmt.Sprintf("%s\n\n", pConfig.Compare(l.lastData, state)))
+if err != nil {
+	glog.Errorf("problem writing to debug file: %s", err)
+	return
+}
+l.lastData = state
+```
+
 
 ## Previous works
 
