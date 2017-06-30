@@ -231,12 +231,19 @@ func (s *signaler) insert(sig Signal) {
 	}
 }
 
+// ActionType indicates what type of Action this is.
+type ActionType int
+
+func (a ActionType) isActionType() bool {
+	return true
+}
+
 // Action represents an action to take on the Store.
 type Action struct {
 	// Type should be an enumerated constant representing the type of Action.
 	// It is valuable to use http://golang.org/x/tools/cmd/stringer to allow
 	// for string representation.
-	Type int
+	Type ActionType
 
 	// Update holds the values to alter in the Update.
 	Update interface{}
