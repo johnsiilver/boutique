@@ -27,9 +27,7 @@ Javascript clients. I like to use it instead of Redux.
 * An application has lots of clients, each which need to store state and
 receive updates.
 * An application that has clients sharing a single state with updates pushed
-to all clients.
-* An application that needs to store a single state and send changes to
-clients or go-routines.
+to all clients or goroutines.
 
 ## Before we get started
 
@@ -51,7 +49,7 @@ There are three main drawbacks for using Boutique:
 assertion, reflection and data copies
 * In very certain circumstances, Boutique can have runtime errors due to using
 interface{}
-* Storage updates are done via Actions, which adds some complexity
+* Storage updates are done via **Actions**, which adds some complexity
 
 The first, running slower is because we must not only type assert at different
 points, but reflection is used to detect changes in the data fields that are in
@@ -66,11 +64,11 @@ stored in Boutique is not a struct type.  The top level data must be a struct.
 In a non-generic store, these would be caught by the compiler.  But these are
 easy to avoid and are generally a non-issue.
 
-The third is more difficult.  Changes are routed through Actions.  Actions
-trigger Modifers, which also must be written.  The concepts take a bit to
-understand and you have to be careful to copy the data and not mutate the data
-when writing Modifiers.   This adds a certain amount of complexity. But once
-you get used to it, its very easy to follow.
+The third is more difficult.  Changes are routed through **Actions**.  
+**Actions** trigger **Modifers**, which also must be written.  The concepts
+take a bit to understand and you have to be careful to copy the data and
+not mutate the data when writing **Modifier(s)**.   This adds a certain amount of
+complexity. But once you get used to it, its very easy to follow.
 
 ## Let's get started!
 
@@ -138,7 +136,7 @@ while Messages is the current buffer of user messages waiting to be sent out
 to the users.
 
 Now that we have our data to store in Boutique, let us talk about how to
-signal a change to the store, via Actions.
+signal a change to the store, via **Actions**.
 
 ### Create our actions
 
@@ -229,13 +227,13 @@ SendMessage takes in the user sending the message, and the text
 message itself. It creates a boutique.Action setting the Type to ActSendMessage
 and the Update to a data.Message, which we will use to update our store.
 
-Now, we have Actions that describe the changes we want to do, but how do we
+Now, we have **Actions** that describe the changes we want to do, but how do we
 make those changes?  
 
 ### Writing Modifiers
 
-Modifiers interpret Actions and handle updating the data in the store.  All
-Modifiers must conform to the following signature which is defined by
+**Modifier(s)** interpret **Actions** and handle updating the data in the store.  All
+**Modifier(s)** must conform to the following signature which is defined by
 boutique.Modifier:
 
 ```go
@@ -244,14 +242,14 @@ type Modifier func(state interface{}, action Action) interface{}
 
 The "state" is the data object that will get updated.  In our case,
 this would be data.State that we defined in package data.  "action" is the
-boutique.Action that is to be processed.  An Modifier does NOT have to handle a
-specific Action Type, it only has to handle the Actions it is designed to
+boutique.Action that is to be processed.  A Modifier does NOT have to handle a
+specific Action Type, it only has to handle the **Actions** it is designed to
 ecognizes. If it does not recognize the action.Type, it should simply return
 state as it was passed.  Otherwise Modifier returns the updated state object.
 
-There is a fundamental rule that MUST be obeyed by all Modifiers:
+There is a fundamental rule that MUST be obeyed by all **Modifier(s)**:
 
-THOU SHALL NOT MUTATE DATA!
+**THOU SHALL NOT MUTATE DATA!**
 
 Non-references can be changed directly.  But reference types
 or pointer values must be copied and replaced, never modified.  
@@ -265,13 +263,13 @@ cache.
 The only exception to this is synchronization Types that can be copied, such
 as a channel or \*sync.WaitGroup.  Do this sparingly!
 
-Here are some Modifiers to handle our Actions.  We could write one Modifier to
-handle all Actions or multiple Modifiers handling each individual Actions.
+Here are some **Modifier(s)** to handle our **Actions**.  We could write one Modifier to
+handle all **Actions** or multiple **Modifier(s)** handling each individual **Actions**.
 I've chosen the latter, as I find it more readable.
 
 ```go
-// Modifiers is a boutique.Modifiers made up of all Modifier(s) in this file.
-var Modifier = boutique.NewModifiers(SendMessage, AddUser)
+// Modifier is a boutique.Modifiers made up of all Modifier(s) in this file.
+var Modifiers = boutique.NewModifiers(SendMessage, AddUser)
 
 // SendMessage handles an Action of type ActSendMessage.
 func SendMessage(state interface{}, action boutique.Action) interface{} {
@@ -299,7 +297,7 @@ func AddUser(state interface{}, action boutique.Action) interface{} {
 }
 ```
 
-All Modifier(s) follow the boutique.Modifier signature.  They receive a State
+All **Modifier(s)** follow the boutique.Modifier signature.  They receive a State
 and an Action.  
 
 SendMessage receives immediately type asserts the state from an interface{} into
@@ -360,16 +358,16 @@ func AddUser(state interface{}, action boutique.Action) interface{} {
 }
 ```
 
-Now lets talk about Modifiers.
+Now lets talk about **Modifiers**.
 
 ```go
 var Modifiers = boutique.NewModifiers(SendMessage, AddUser)
 ```
 
 Every update to boutique.Store is done through .Perform().  When .Perform()
-is called, it runs all of your Modifier(s) in the order you choose.  These
-Modifier(s) are registered to boutique.Store via the New() call.  A Modifiers is
-a collection of Modifier(s) in the order they will be applied.
+is called, it runs all of your **Modifier(s)** in the order you choose.  These
+**Modifier(s)** are registered to boutique.Store via the New() call.  A **Modifiers** is
+a collection of **Modifier(s)** in the order they will be applied.
 
 ### Creating your boutique.Store
 
@@ -420,8 +418,8 @@ creates our initial data object, data.State, giving it a unique serverID
 (I like pborman's UUID library for generating unique IDs), the name of the
 channel we are storing state for, our initial Users and Messages.
 
-Then the store is initiated containing our starting data, our Modifiers, and
-no Middleware (we will come back to this).
+Then the store is initiated containing our starting data, our **Modifiers**, and
+no **Middleware** (we will come back to this).
 
 Alright, let's see how we can use this.
 
@@ -594,11 +592,11 @@ with an actions.SendMessage(), and all of our clients are magically updated!
 ### Middleware
 
 #### Introduction
-Middleware allows you to extend the Store by inserting data handlers into
+**Middleware** allows you to extend the Store by inserting data handlers into
 the Perform() calls either before the commit to the Store or after the data
 has been committed.
 
-Middleware can:
+**Middleware** can:
 
 * Change store data as an update passed through.
 * Deny an update.
@@ -615,7 +613,7 @@ A few example middleware applications:
 * ...
 
 #### Defining Middleware
-Middleware is simply a function/method that implements the following signature:
+**Middleware** is simply a function/method that implements the following signature:
 
 ```go
 type Middleware func(args *MWArgs) (changedData interface{}, stop bool, err error)
@@ -656,7 +654,7 @@ object.
 
 Let's skip Committed for the moment, we'll get back to it later.
 
-WG is very important.  Your Middleware must call WG.Done() before exiting or
+WG is very important.  Your **Middleware** must call WG.Done() before exiting or
 your Perform() call will block forever.  There is a handy log message that
 catches these if your forget during development.
 
@@ -670,7 +668,7 @@ changedData represents the State.Data you want to change. If you are not going
 to edit the data, then you can simply return nil here.  Otherwise you may
 modify args.NewData and then return it here to affect your change.
 
-stop is an indicator that you want to prevent other Middleware from executing
+stop is an indicator that you want to prevent other **Middleware** from executing
 and immediately commit the change.
 
 err indicates you wish to prevent the change and send an error to the Perform()
@@ -678,7 +676,7 @@ caller.
 
 #### A synchronous Middleware
 
-So let's design a synchronous Middleware that cleans up older Messages in our
+So let's design a synchronous **Middleware** that cleans up older Messages in our
 example application. This will be synchronous because we do this before our
 Perform is completed.
 
@@ -754,24 +752,24 @@ case len(d.Messages[i:]) > 0:
 ```
 
 Here we copy the data from the slice into a new slice, though that isn't
-strictly necessary. Middleware is run after Modifiers, so all this data is a
+strictly necessary. **Middleware** is run after **Modifiers**, so all this data is a
 copy already.  However, not doing so will make the slice smaller, but the
 underlying array will continue to grow.  Your len() may be 0, but your
-capacity might be 50,000.  Not what you want in a cleanup Middleware!
+capacity might be 50,000.  Not what you want in a cleanup **Middleware**!
 
 #### Asynchronous Middleware
 
-Asynchronous Middleware is useful when you want to trigger something to happen
+Asynchronous **Middleware** is useful when you want to trigger something to happen
 or view the final committed data.  However, it comes with the limitation that
 you cannot alter the data.
 
  * Trigger third-party code and you don't need to modify data
  * You want to trigger something to happen after the commit to the store occurs
 
- The key here is that no matter what, Asynchronous Middleware cannot alter
+ The key here is that no matter what, Asynchronous **Middleware** cannot alter
  the data.
 
-Let's create some Middleware that can be turned on or off at anytime and lets us
+Let's create some **Middleware** that can be turned on or off at anytime and lets us
 record a diff of our Store on each commit.
 
 ```go
@@ -830,7 +828,7 @@ a lot of control on how things are diffed.  You can find it here:
 "github.com/kylelemons/godebug/pretty"
 
 Next we need to setup our Logger.  If the user starts the server with debug
-logging turned on, we include this in our Middleware. If not we don't.
+logging turned on, we include this in our **Middleware**. If not we don't.
 
 ```go
 type Logging struct {
@@ -864,7 +862,7 @@ go func() { // Set off our Asynchronous method.
 }()
 ```
 
-First thing we on is kick off our Middleware into async mode with a goroutine.
+First thing we on is kick off our **Middleware** into async mode with a goroutine.
 If we didn't need to wait for the data to be committed, we would simply do the
 ```go
 args.WG.Done()
