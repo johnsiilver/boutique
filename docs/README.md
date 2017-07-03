@@ -90,16 +90,26 @@ To start with, the data to be stored must be of type struct.  Now to be clear,
 this cannot be \*struct, it must be a plain struct.  It is also important to
 note that only public fields can received notification of subscriber changes.
 
-For this example, we are going to use part of the example application included
-with Boutique, a chat server called ChatterBox.  Users access the chat server,
-subscribing to a comm channel.  They can then send and receive messages which
-other users of the comm channel can see.
-We are going to include middleware to help debug and log all conversations.
+For this example we are going to use the example application ChatterBox included
+with Boutique.  This provides an IRC like service using websockets.  Users
+can access the chat server and subscribe to a channel where they can:
+
+ * Send and receive messages on a channel to other users on the channel
+ * View who is on a channel
+ * Change channels
+
+We are going to include middleware that:
+
+ * Prevents messages being sent over 500 characters.
+ * Allows debug logging of the boutique.Store as it is updated.
+ * Allows logging of all channel communications to a file.
+ * Deletes older messages in the boutique.Store that are no longer needed.
 
 This example is not going to include all of the application's functions, just
-enough to cover the basics.
+enough to cover the subjects we are discussing. For example, we don't want to
+get into how websockets work as that isn't important for understanding Boutique.
 
-So let's start by defining the data we need, which is going to be stored
+Let's start by defining the data we need, which is going to be stored
 in state/data/data.go
 
 ```go
@@ -127,12 +137,11 @@ type Message struct {
 type State struct {
 	// ServerID is a UUID that uniquely represents this server instance.
 	ServerID string
-
 	// Channel is the channel this represents.
 	Channel string
 	// Users are the users in the Channel.
 	Users []string
-	// Messages in the current messages.
+	// Messages waiting to be sent out to our users.
 	Messages []Message
 ```
 
@@ -167,7 +176,7 @@ Its important that you understand that this simply signals a change, it does
 not make a change.  You don't always need .Update, because sometimes the signal
 via Type is enough.  Say you had a field, Version, that needed to be
 incremented.  It would simply be enough to pass an Action with type
-ActVerIncr.  
+that indicated this was the action needed.  
 
 But often times, you need to do more, such as change a value, merge two
 structs, etc.  That is when Update is used, to pass the value.
