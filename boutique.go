@@ -60,6 +60,7 @@ through.
 package boutique
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -758,6 +759,26 @@ func fieldList(st interface{}) []string {
 // get a copy of the pointer, not of the underlying value.
 func ShallowCopy(i interface{}) interface{} {
 	return i
+}
+
+// DeepCopy makes a DeepCopy of all elements in from into to.
+// to must be a pointer to the type of from.
+// from and to must be the same type.
+func DeepCopy(from, to interface{}) error {
+	if reflect.TypeOf(to).Kind() != reflect.Ptr {
+		return fmt.Errorf("DeepCopy: to must be a pointer")
+	}
+
+	b, err := json.Marshal(from)
+	if err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(b, to); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // CopyAppendSlice takes a slice, copies the slice into a new slice and appends
