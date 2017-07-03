@@ -60,7 +60,6 @@ through.
 package boutique
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -70,6 +69,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/mohae/deepcopy"
 )
 
 // Any is used to indicated to Store.Subscribe() that you want updates for
@@ -761,22 +761,19 @@ func ShallowCopy(i interface{}) interface{} {
 	return i
 }
 
-// DeepCopy makes a DeepCopy of all elements in from into to.
-// to must be a pointer to the type of from.
-// from and to must be the same type.
+// DeepCopy makes a DeepCopy of all elements in "from" into "to".
+// "to" must be a pointer to the type of "from".
+// "from" and "to" must be the same type.
+// Private fields will not be copied.  It this is needed, you should handle
+// the copy method yourself.
 func DeepCopy(from, to interface{}) error {
 	if reflect.TypeOf(to).Kind() != reflect.Ptr {
 		return fmt.Errorf("DeepCopy: to must be a pointer")
 	}
 
-	b, err := json.Marshal(from)
-	if err != nil {
-		return err
-	}
-
-	if err := json.Unmarshal(b, to); err != nil {
-		return err
-	}
+	cpy := deepcopy.Copy(from)
+	glog.Infof("%v", reflect.ValueOf(to).CanSet())
+	reflect.ValueOf(to).Elem().Set(reflect.ValueOf(cpy))
 
 	return nil
 }
@@ -786,6 +783,7 @@ func DeepCopy(from, to interface{}) error {
 // same type as []Type, then this will panic.
 // This is simply a convenience function for copying then appending to a slice.
 // It is faster to do this by hand without the reflection.
+// This is also not a deep copy, its simply copies the underlying array.
 func CopyAppendSlice(slice interface{}, item interface{}) interface{} {
 	i, err := copyAppendSlice(slice, item)
 	if err != nil {
