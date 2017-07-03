@@ -70,6 +70,16 @@ take a bit to understand and you have to be careful to copy the data and
 not mutate the data when writing **Modifier(s)**.   This adds a certain amount of
 complexity. But once you get used to it, its very easy to follow.
 
+## Where are some example applications?
+
+You can find several example applications of varying sophistication here:
+
+IRC like chat server/client using websockets:
+http://github.com/johnsiilver/boutique/example/chatterbox
+
+Stock buy/sell point notifier using desktop notifications:
+http://github.com/johnsiilver/boutique/example/notifier
+
 ## Let's get started!
 
 ### First, define what data you want to store
