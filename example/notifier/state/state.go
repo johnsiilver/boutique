@@ -5,7 +5,7 @@ package state
 import (
 	"github.com/johnsiilver/boutique"
 	"github.com/johnsiilver/boutique/example/notifier/state/data"
-	"github.com/johnsiilver/boutique/example/notifier/state/updaters"
+	"github.com/johnsiilver/boutique/example/notifier/state/modifiers"
 )
 
 // New is the constructor for a boutique.Store
@@ -14,5 +14,5 @@ func New() (*boutique.Store, error) {
 		Tracking: map[string]data.Stock{},
 	}
 
-	return boutique.New(d, updaters.Modifiers, nil)
+	return boutique.New(d, modifiers.All, nil)
 }

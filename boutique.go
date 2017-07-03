@@ -37,8 +37,8 @@ Boutique provides storage that is best designed in a modular method:
 		|   └── data.go
 		├── middleware
 		|   └── middleware.go
-    └── updaters
-        └── updaters.go
+    └── modifiers
+        └── modifiers.go
 
 The files are best organized by using them as follows:
 
@@ -46,7 +46,7 @@ The files are best organized by using them as follows:
   actions.go - Holds the actions that will be used by the updaters to update the store
 	data.go - Holds the definition of your state object
 	middleware.go = Holds middleware for acting on changes to your data. This is not required
-  updaters.go - Holds all the updaters that are used by the boutique.Store to modify the store's data
+  modifiers.go - Holds all the Modifier(s) that are used by the boutique.Store to modify the store's data
 
 
   Note: These are all simply suggestions, you can combine this in a single file or name the files whatever you wish.

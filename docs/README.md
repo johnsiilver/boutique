@@ -53,8 +53,9 @@ interface{}
 
 The first, running slower is because we must not only type assert at different
 points, but reflection is used to detect changes in the data fields that are in
-the data being stored.  This cost can be made up for by reads of data without
-synchronization and reduced complexity in the subscription model.
+the data being stored.  We also need to copy data out of maps, slices, etc...
+into new maps, slices, etc... This cost is lessened by reads of data
+without synchronization and reduced complexity in the subscription model.
 
 The second, runtime errors, happen when one of two events occur.  The type of
 data to be stored in Boutique is changed on a write.  The first data passed to
@@ -62,13 +63,14 @@ the store is the only type that can be stored.  Any attempt to store a different
 type of data will result in an error.  The second way is if the data being
 stored in Boutique is not a struct type.  The top level data must be a struct.  
 In a non-generic store, these would be caught by the compiler.  But these are
-easy to avoid and are generally a non-issue.
+are generally non-issues.
 
 The third is more difficult.  Changes are routed through **Actions**.  
 **Actions** trigger **Modifers**, which also must be written.  The concepts
-take a bit to understand and you have to be careful to copy the data and
-not mutate the data when writing **Modifier(s)**.   This adds a certain amount of
-complexity. But once you get used to it, its very easy to follow.
+take a bit to understand and you have to be careful to not mutate the data when
+writing **Modifier(s)**.   This adds a certain amount of
+complexity. But once you get used to the method in the madness, the code is
+easy to follow.
 
 ## Where are some example applications?
 
@@ -273,13 +275,13 @@ cache.
 The only exception to this is synchronization Types that can be copied, such
 as a channel or \*sync.WaitGroup.  Do this sparingly!
 
-Here are some **Modifier(s)** to handle our **Actions**.  We could write one Modifier to
-handle all **Actions** or multiple **Modifier(s)** handling each individual **Actions**.
-I've chosen the latter, as I find it more readable.
+Here are some **Modifier(s)** to handle our **Actions**.  We could write one
+Modifier to handle all **Actions** or multiple **Modifier(s)** handling each
+individual **Actions**. I've chosen the latter, as I find it more readable.
 
 ```go
-// Modifier is a boutique.Modifiers made up of all Modifier(s) in this file.
-var Modifiers = boutique.NewModifiers(SendMessage, AddUser)
+// All is a boutique.Modifiers made up of all Modifier(s) in this file.
+var All = boutique.NewModifiers(SendMessage, AddUser)
 
 // SendMessage handles an Action of type ActSendMessage.
 func SendMessage(state interface{}, action boutique.Action) interface{} {
@@ -376,8 +378,9 @@ var Modifiers = boutique.NewModifiers(SendMessage, AddUser)
 
 Every update to boutique.Store is done through .Perform().  When .Perform()
 is called, it runs all of your **Modifier(s)** in the order you choose.  These
-**Modifier(s)** are registered to boutique.Store via the New() call.  A **Modifiers** is
-a collection of **Modifier(s)** in the order they will be applied.
+**Modifier(s)** are registered to boutique.Store via the New() call.  
+A **Modifiers** is a collection of **Modifier(s)** in the order they will
+be applied.
 
 ### Creating your boutique.Store
 
@@ -396,7 +399,7 @@ import (
 	"github.com/johnsiilver/boutique"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/data"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/middleware"
-	"github.com/johnsiilver/boutique/example/chatterbox/server/state/updaters"
+	"github.com/johnsiilver/boutique/example/chatterbox/server/state/modifiers"
 )
 
 // Hub contains the central store and our middleware.
@@ -414,7 +417,7 @@ func New(channelName string, serverID string) (*Hub, error) {
 		Messages: []data.Message{},
 	}
 
-	s, err := boutique.New(d, updaters.Modifier, nil)
+	s, err := boutique.New(d, updaters.All, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +626,8 @@ A few example middleware applications:
 * ...
 
 #### Defining Middleware
-**Middleware** is simply a function/method that implements the following signature:
+**Middleware** is simply a function/method that implements the
+following signature:
 
 ```go
 type Middleware func(args *MWArgs) (changedData interface{}, stop bool, err error)
@@ -678,16 +682,16 @@ changedData represents the State.Data you want to change. If you are not going
 to edit the data, then you can simply return nil here.  Otherwise you may
 modify args.NewData and then return it here to affect your change.
 
-stop is an indicator that you want to prevent other **Middleware** from executing
-and immediately commit the change.
+stop is an indicator that you want to prevent other **Middleware** from
+executing and immediately commit the change.
 
 err indicates you wish to prevent the change and send an error to the Perform()
 caller.
 
 #### A synchronous Middleware
 
-So let's design a synchronous **Middleware** that cleans up older Messages in our
-example application. This will be synchronous because we do this before our
+So let's design a synchronous **Middleware** that cleans up older Messages in
+our example application. This will be synchronous because we do this before our
 Perform is completed.
 
 ```go
@@ -762,16 +766,16 @@ case len(d.Messages[i:]) > 0:
 ```
 
 Here we copy the data from the slice into a new slice, though that isn't
-strictly necessary. **Middleware** is run after **Modifiers**, so all this data is a
-copy already.  However, not doing so will make the slice smaller, but the
+strictly necessary. **Middleware** is run after **Modifiers**, so all this data
+is a copy already.  However, not doing so will make the slice smaller, but the
 underlying array will continue to grow.  Your len() may be 0, but your
 capacity might be 50,000.  Not what you want in a cleanup **Middleware**!
 
 #### Asynchronous Middleware
 
-Asynchronous **Middleware** is useful when you want to trigger something to happen
-or view the final committed data.  However, it comes with the limitation that
-you cannot alter the data.
+Asynchronous **Middleware** is useful when you want to trigger something to
+happen or view the final committed data.  However, it comes with the limitation
+that you cannot alter the data.
 
  * Trigger third-party code and you don't need to modify data
  * You want to trigger something to happen after the commit to the store occurs
@@ -779,8 +783,8 @@ you cannot alter the data.
  The key here is that no matter what, Asynchronous **Middleware** cannot alter
  the data.
 
-Let's create some **Middleware** that can be turned on or off at anytime and lets us
-record a diff of our Store on each commit.
+Let's create some **Middleware** that can be turned on or off at anytime and
+lets us record a diff of our Store on each commit.
 
 ```go
 var pConfig = &pretty.Config{
@@ -872,8 +876,9 @@ go func() { // Set off our Asynchronous method.
 }()
 ```
 
-First thing we on is kick off our **Middleware** into async mode with a goroutine.
-If we didn't need to wait for the data to be committed, we would simply do the
+First thing we do is kick off our **Middleware** into async mode with a
+goroutine. If we didn't need to wait for the data to be committed, we would
+simply do the:
 ```go
 args.WG.Done()
 ```

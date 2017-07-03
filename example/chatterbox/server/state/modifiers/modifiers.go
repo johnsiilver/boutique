@@ -1,5 +1,5 @@
-// Package updaters holds all the boutique.Updaters and the boutique.Modifer for the state store.
-package updaters
+// Package modifiers holds all the boutique.Updaters and the boutique.Modifer for the state store.
+package modifiers
 
 import (
 	"github.com/golang/glog"
@@ -8,8 +8,8 @@ import (
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/data"
 )
 
-// Modifiers is a boutique.Modifiers made up of all Modifier(s) in this file.
-var Modifiers = boutique.NewModifiers(SendMessage, DeleteMessages, AddUser, RemoveUser)
+// All is a boutique.Modifiers made up of all Modifier(s) in this file.
+var All = boutique.NewModifiers(SendMessage, DeleteMessages, AddUser, RemoveUser)
 
 // SendMessage handles an Action of type ActSendMessage.
 func SendMessage(state interface{}, action boutique.Action) interface{} {

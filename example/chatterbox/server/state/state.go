@@ -6,7 +6,7 @@ import (
 	"github.com/johnsiilver/boutique"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/data"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/middleware"
-	"github.com/johnsiilver/boutique/example/chatterbox/server/state/updaters"
+	"github.com/johnsiilver/boutique/example/chatterbox/server/state/modifiers"
 	"github.com/pborman/uuid"
 )
 
@@ -31,7 +31,7 @@ func New(channelName string) (*Hub, error) {
 
 	mw := []boutique.Middleware{middleware.CleanMessages, middleware.EnforceMsgLength, l.DebugLog, l.ChannelLog}
 
-	s, err := boutique.New(d, updaters.Modifiers, mw)
+	s, err := boutique.New(d, modifiers.All, mw)
 	if err != nil {
 		return nil, err
 	}

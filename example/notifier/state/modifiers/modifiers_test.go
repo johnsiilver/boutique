@@ -1,4 +1,4 @@
-package updaters
+package modifiers
 
 import (
 	"runtime"
