@@ -264,8 +264,8 @@ type Modifiers struct {
 }
 
 // NewModifiers creates a new Modifiers with the Modifiers provided.
-func NewModifiers(updaters ...Modifier) Modifiers {
-	return Modifiers{updater: combineModifier(updaters...)}
+func NewModifiers(modifiers ...Modifier) Modifiers {
+	return Modifiers{updater: combineModifier(modifiers...)}
 }
 
 // run calls the updater on state/action.
