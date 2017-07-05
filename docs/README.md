@@ -2,11 +2,11 @@
 
 ## One line summary
 
-Boutique is an immutable data store with subscriptions to field changes.
+Boutique is an immutable state store with subscriptions to field changes.
 
 ## The long summary
 
-Boutique provides a data store for storing immutable data.  This allows data
+Boutique provides a state store for storing immutable data.  This allows data
 retrieved from the store to be used without providing synchronization even as
 changes are made to data in the store by other go-routines.
 
@@ -20,14 +20,14 @@ changes to the store.
 
 ## Best use cases?
 
-Boutique is useful for things like:
+Boutique is useful for:
 
 * A web based application that stores state on the server and not in
 Javascript clients. I like to use it instead of Redux.
-* An application has lots of clients, each which need to store state and
+* An application that has lots of clients, each which need to store state and
 receive updates.
-* An application that has clients sharing a single state with updates pushed
-to all clients or goroutines.
+* An application that has listeners sharing a single state with updates pushed
+to all listeners.
 
 ## Before we get started
 
@@ -39,6 +39,8 @@ contract to only change the data through the Boutique store.  All changes in
 the store must copy the data before committing the changes.
 
 On Unix based systems, it is possible to test your code to ensure no mutations.
+See: http://godoc.org/github.com/lukechampine/freeze
+
 I have seen no way to do this for Windows.
 
 ## What is the cost of using a generic immutable store?
@@ -67,16 +69,17 @@ are generally non-issues.
 
 The third is more difficult.  Changes are routed through **Actions**.  
 **Actions** trigger **Modifers**, which also must be written.  The concepts
-take a bit to understand and you have to be careful to not mutate the data when
+take a bit to understand and you have to be careful not to mutate the data when
 writing **Modifier(s)**.   This adds a certain amount of
-complexity. But once you get used to the method in the madness, the code is
+complexity. But once you get used to the method, the code is
 easy to follow.
 
 ## Where are some example applications?
 
 You can find several example applications of varying sophistication here:
 
-IRC like chat server/client using websockets:
+IRC like chat server/client using websockets with a sample terminal UI.
+Welcome back to the 70's:
 http://github.com/johnsiilver/boutique/example/chatterbox
 
 Stock buy/sell point notifier using desktop notifications:
