@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -40,6 +41,9 @@ func New() *ChatterBox {
 
 // Handler implements http.HandleFunc.
 func (c *ChatterBox) Handler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		glog.Errorf("error connecting to server: %s", err)
@@ -71,8 +75,8 @@ func (c *ChatterBox) Handler(w http.ResponseWriter, r *http.Request) {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 
-	go c.clientReceiver(wg, m.User, m.Channel, conn, state.Store)
-	go c.clientSender(wg, m.User, m.Channel, conn, state.Store)
+	go c.clientReceiver(cancel, wg, m.User, m.Channel, conn, state.Store)
+	go c.clientSender(ctx, wg, m.User, m.Channel, conn, state.Store)
 
 	wg.Wait()
 }
@@ -153,13 +157,14 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 // clientReceiver is used to process messages that are received over the websocket from the client.
 // This is meant to be run in a goroutine as it blocks for the life of the conn and decrements
 // wg when it finally ends.
-func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+func (c *ChatterBox) clientReceiver(cancel context.CancelFunc, wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
 	defer wg.Done()
 
 	for {
 		m, err := c.read(conn)
 		if err != nil {
 			glog.Errorf("client %s with user %s terminated its connection", conn.RemoteAddr(), usr)
+			cancel()
 			return
 		}
 		if m.Type != messages.CMSendText {
@@ -185,7 +190,7 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 
 // clientSender receives changes to the store's Messaages field and pushes them out to
 // our websocket clients.
-func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+func (c *ChatterBox) clientSender(ctx context.Context, wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
 	const (
 		msgField   = "Messages"
 		usersField = "Users"
@@ -236,6 +241,8 @@ func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string,
 				c.sendError(conn, err)
 				return
 			}
+		case <-ctx.Done():
+			return
 		}
 	}
 }
