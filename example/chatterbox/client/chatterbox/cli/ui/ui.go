@@ -89,6 +89,13 @@ func MessagesDisplay(lines chan string, reRender chan struct{}) {
 				par.Height = ui.TermHeight() - 10
 				par.Width = ui.TermWidth() - 25
 				par.WrapLength = ui.TermWidth() - 25
+				if len(data) > 0 {
+					start := 0
+					if par.Height-3 < len(data) { // I hate magic, but 3 seems to be a magic number for the term.
+						start = len(data) - par.Height + 3
+					}
+					par.Text = strings.Join(data[start:], "\n")
+				}
 			case l := <-lines:
 				data = append(data, l)
 				// Trim down if we have more than 300 lines.
@@ -99,8 +106,8 @@ func MessagesDisplay(lines chan string, reRender chan struct{}) {
 				}
 				if len(data) > 0 {
 					start := 0
-					if par.Height < len(data) {
-						start = len(data) - par.Height
+					if par.Height-3 < len(data) { // I hate magic, but 3 seems to be a magic number for the term.
+						start = len(data) - par.Height + 3
 					}
 					par.Text = strings.Join(data[start:], "\n")
 				}
@@ -162,7 +169,10 @@ func Input(wg *sync.WaitGroup, args InputArgs) {
 		})
 
 		ui.Handle("/sys/kbd/<enter>", func(e ui.Event) {
-			if content[0] == "/" {
+			switch {
+			case len(content) == 0:
+				// Do nothing
+			case content[0] == "/":
 				if len(content) == 1 {
 					args.MsgDisplay <- "'/' is not a valid command"
 					return
@@ -174,12 +184,11 @@ func Input(wg *sync.WaitGroup, args InputArgs) {
 				default:
 					args.MsgDisplay <- fmt.Sprintf("unsupported command: /%s", v)
 				}
-			} else {
+			default:
 				send := strings.Join(content, "")
 				args.MsgSend <- send
 				content = content[0:0]
 				args.InputLine <- ""
-				return
 			}
 		})
 
