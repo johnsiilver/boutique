@@ -2,6 +2,8 @@
 package modifiers
 
 import (
+	"sort"
+
 	"github.com/johnsiilver/boutique"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/actions"
 	"github.com/johnsiilver/boutique/example/chatterbox/server/state/data"
@@ -31,6 +33,7 @@ func AddUser(state interface{}, action boutique.Action) interface{} {
 	switch action.Type {
 	case actions.ActAddUser:
 		s.Users = boutique.CopyAppendSlice(s.Users, action.Update).([]string)
+		sort.Strings(s.Users)
 	}
 	return s
 }

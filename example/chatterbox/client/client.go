@@ -40,7 +40,7 @@ Usage is simple:
       fmt.Printf("Exiting comm channel %s\n", channel)
       break
     }
-    if err := c.SendText; err != nil {
+    if err := c.SendText(text); err != nil {
       fmt.Printf("Error: %s, exiting....\n", err)
       break
     }
@@ -61,6 +61,9 @@ import (
 )
 
 // ChatterBox is a client for the ChatterBox service.
+// You must service all publically available channels or the client might
+// freeze.
+// TODO(johnsiilver): Fix that, its ridiculous.
 type ChatterBox struct {
 	// The websocket connection.
 	conn *websocket.Conn
@@ -72,9 +75,13 @@ type ChatterBox struct {
 	user atomic.Value // holds a string
 	dead atomic.Value // holds a bool
 
-	serverErrors chan error
 	// Messages are text messages arriving from the server to this client.
-	Messages   chan messages.Server
+	Messages chan messages.Server
+	// ServerErrors are errors sent from the server to the client.
+	ServerErrors chan error
+	// UserUpdates are updates to the users who are in the comm channel.
+	UserUpdates chan []string
+
 	subscribed chan messages.Server
 }
 
@@ -97,8 +104,9 @@ func New(addr string, username string) (*ChatterBox, error) {
 	c := &ChatterBox{
 		conn:         conn,
 		kill:         make(chan struct{}),
-		serverErrors: make(chan error, 10),
+		ServerErrors: make(chan error, 10),
 		Messages:     make(chan messages.Server, 10),
+		UserUpdates:  make(chan []string, 10),
 		subscribed:   make(chan messages.Server, 1),
 	}
 	c.user.Store(username)
@@ -131,12 +139,13 @@ func (c *ChatterBox) serverReceiver() {
 		switch sm.Type {
 		case messages.SMError:
 			glog.Infof("server sent an error back: %s", sm.Text.Text)
-			c.serverErrors <- errors.New(sm.Text.Text)
+			c.ServerErrors <- errors.New(sm.Text.Text)
 		case messages.SMSendText:
 			c.Messages <- sm
 		case messages.SMSubAck:
 			glog.Infof("server acknowledged subscription to channel")
 			c.subscribed <- sm
+			c.UserUpdates <- sm.Users
 		default:
 			glog.Infof("dropping message of type %v, I don't understand the type", sm.Type)
 		}
@@ -161,34 +170,34 @@ func (c *ChatterBox) readConn() chan interface{} {
 }
 
 // Subscribe to a new comm channel.  This must be the first method called or it will get rejected.
-func (c *ChatterBox) Subscribe(name string) error {
+func (c *ChatterBox) Subscribe(name string) (users []string, err error) {
 	if name == "" {
-		return fmt.Errorf("Subcribe(name) cannot be empty string")
+		return nil, fmt.Errorf("Subcribe(name) cannot be empty string")
 	}
 
 	if c.dead.Load().(bool) {
-		return fmt.Errorf("this client's connection is dead, can't subscribe")
+		return nil, fmt.Errorf("this client's connection is dead, can't subscribe")
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.channel.Load().(string) != "" {
-		return fmt.Errorf("cannot subscribe to channel %s, you must unsubscribed to channel %s", name, c.channel.Load().(string))
+		return nil, fmt.Errorf("cannot subscribe to channel %s, you must unsubscribed to channel %s", name, c.channel.Load().(string))
 	}
 
 	msg := messages.Client{Type: messages.CMSubscribe, Channel: name, User: c.user.Load().(string)}
 	if err := c.conn.WriteJSON(msg); err != nil {
 		c.dead.Store(true)
-		return fmt.Errorf("connection to server is broken, this client is dead: %s", err)
+		return nil, fmt.Errorf("connection to server is broken, this client is dead: %s", err)
 	}
 
 	select {
-	case <-c.subscribed:
+	case m := <-c.subscribed:
 		c.channel.Store(name)
-		return nil
+		return m.Users, nil
 	case <-time.After(5 * time.Second):
-		return fmt.Errorf("never received subscribe acknowledge")
+		return nil, fmt.Errorf("never received subscribe acknowledge")
 	}
 }
 

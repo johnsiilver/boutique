@@ -82,35 +82,45 @@ func (c *ChatterBox) subscribe(conn *websocket.Conn, m messages.Client) (*state.
 	c.chMu.Lock()
 	defer c.chMu.Unlock()
 
-	hub, err := state.New(m.Channel)
-	if err != nil {
-		return nil, err
-	}
+	var (
+		hub *state.Hub
+		err error
+	)
 
 	mchan, ok := c.channels[m.Channel]
-	if !ok {
-		mchan = &channel{hub: hub, users: map[string]bool{m.User: true}}
-		c.channels[m.Channel] = mchan
-	} else {
+	if ok {
+		hub = mchan.hub
 		if mchan.users[m.User] {
 			c.write( // Ignore error, because its reporting an error, an error here has nothing to do.
 				conn,
 				messages.Server{
 					Type: messages.SMError,
 					Text: messages.Text{
-						Text: fmt.Sprintf("a user names %s is already in this channel: %s", m.User, m.Channel),
+						Text: fmt.Sprintf("a user named %s is already in this channel: %s", m.User, m.Channel),
 					},
 				},
 			)
 			return nil, fmt.Errorf("subscribe erorr")
 		}
+	} else {
+		hub, err = state.New(m.Channel)
+		if err != nil {
+			return nil, err
+		}
+		mchan = &channel{hub: hub, users: map[string]bool{m.User: true}}
+		c.channels[m.Channel] = mchan
 	}
 
 	mchan.users[m.User] = true
+	if err = hub.Store.Perform(actions.AddUser(m.User)); err != nil {
+		return nil, err
+	}
+
 	err = c.write(
 		conn,
 		messages.Server{
-			Type: messages.SMSubAck,
+			Type:  messages.SMSubAck,
+			Users: hub.Store.State().Data.(data.State).Users,
 		},
 	)
 	if err != nil {
@@ -135,6 +145,9 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 	}
 
 	delete(mchan.users, u)
+	if err := mchan.hub.Store.Perform(actions.RemoveUser(u)); err != nil {
+		glog.Errorf("problem removing user from Store: %s", err)
+	}
 }
 
 // clientReceiver is used to process messages that are received over the websocket from the client.
@@ -146,7 +159,7 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 	for {
 		m, err := c.read(conn)
 		if err != nil {
-			glog.Error(err)
+			glog.Errorf("client %s with user %s terminated its connection", conn.RemoteAddr(), usr)
 			return
 		}
 		if m.Type != messages.CMSendText {
@@ -156,29 +169,16 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 
 		err = m.Validate()
 		if err != nil {
-			glog.Error(err)
-			err = c.write(
-				conn,
-				messages.Server{
-					Type: messages.SMError,
-					Text: messages.Text{
-						Text: err.Error(),
-					},
-				},
-			)
-			if err != nil {
-				glog.Errorf("problem writing to %s: %s", chName, err)
+			if err = c.sendError(conn, err); err != nil {
 				return
 			}
 			continue
 		}
 
-		//subDone := make(chan boutique.State, 1)
 		if err := store.Perform(actions.SendMessage(usr, m.Text.Text)); err != nil {
-			// TODO(jdoak): abstract sending error messages to the client into a method
-			// and then do that here.  Then continue unless there is an error.
-			glog.Infof("problem calling store.Perform(): %s", err)
-			return
+			if err = c.sendError(conn, fmt.Errorf("problem calling store.Perform(): %s", err)); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -186,53 +186,72 @@ func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName strin
 // clientSender receives changes to the store's Messaages field and pushes them out to
 // our websocket clients.
 func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
-	const field = "Messages"
+	const (
+		msgField   = "Messages"
+		usersField = "Users"
+	)
+
 	defer wg.Done()
 
 	state := store.State()
 	startData := state.Data.(data.State)
 
 	var lastMsgID = -1
-	var lastVersion uint64
 	if len(startData.Messages) > 0 {
 		lastMsgID = startData.Messages[len(startData.Messages)-1].ID
 	}
 
-	sigCh, cancel, err := store.Subscribe(field)
+	msgCh, msgCancel, err := store.Subscribe(msgField)
 	if err != nil {
-		glog.Error(err)
-		c.write(
-			conn,
-			messages.Server{
-				Type: messages.SMError,
-				Text: messages.Text{
-					Text: err.Error(),
-				},
-			},
-		)
+		c.sendError(conn, err)
 		return
 	}
-	defer cancel()
+	defer msgCancel()
 
-	for sig := range sigCh {
-		if sig.State.FieldVersions[field] <= lastVersion {
-			continue
-		}
+	usersCh, usersCancel, err := store.Subscribe(usersField)
+	if err != nil {
+		c.sendError(conn, err)
+		return
+	}
+	defer usersCancel()
 
-		msgs := sig.State.Data.(data.State).Messages
-		if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
-			continue
-		}
+	for {
+		select {
+		case msgSig := <-msgCh:
+			msgs := msgSig.State.Data.(data.State).Messages
+			if len(msgs) == 0 { // This happens we delete the message queue at the end of this loop.
+				continue
+			}
 
-		var toSend []data.Message
-		toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
-		if len(toSend) > 0 {
-			if err := c.sendMessages(conn, toSend); err != nil {
-				glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+			var toSend []data.Message
+			toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
+			if len(toSend) > 0 {
+				if err := c.sendMessages(conn, toSend); err != nil {
+					glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+					return
+				}
+			}
+		case userSig := <-usersCh:
+			if err := c.write(conn, messages.Server{Type: messages.SMUserUpdate, Users: userSig.State.Data.(data.State).Users}); err != nil {
+				c.sendError(conn, err)
 				return
 			}
 		}
 	}
+}
+
+func (c *ChatterBox) sendError(conn *websocket.Conn, err error) error {
+	glog.Error(err)
+	wErr := c.write(
+		conn,
+		messages.Server{
+			Type: messages.SMError,
+			Text: messages.Text{
+				Text: err.Error(),
+			},
+		},
+	)
+	return wErr
 }
 
 // latestMsgs takes the Messages in the store, locates all Messages after
@@ -307,6 +326,7 @@ func (*ChatterBox) read(conn *websocket.Conn) (messages.Client, error) {
 
 // write writes a Message to the weboscket.
 func (*ChatterBox) write(conn *websocket.Conn, msg messages.Server) error {
+	defer conn.SetWriteDeadline(time.Time{})
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if err := conn.WriteJSON(msg); err != nil {
 		return fmt.Errorf("problem writing msg: %s", err)

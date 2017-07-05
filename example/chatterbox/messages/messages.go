@@ -100,6 +100,8 @@ const (
 	SMSendText = 2
 	// SMSubAck indicates that we successfully subscribed a user to the channel.
 	SMSubAck = 3
+	// SMUserUpdate updates a client with the users in the room.
+	SMUserUpdate = 4
 )
 
 // Server is a message that is sent from the server.
@@ -112,6 +114,10 @@ type Server struct {
 
 	// Text is the text of the message if Type == SMSendText.
 	Text Text
+
+	// Users is a list of of users in a comm channel if Type == SMUserUpdate or
+	// SMSubAck.
+	Users []string
 }
 
 // Validate validates that the messsage is valid.

@@ -82,7 +82,7 @@ func startClient(user string) (*client.ChatterBox, error) {
 		}
 		break
 	}
-	if err = cli.Subscribe("empty"); err != nil {
+	if _, err = cli.Subscribe("empty"); err != nil {
 		return nil, err
 	}
 	return cli, nil
