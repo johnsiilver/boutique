@@ -146,6 +146,8 @@ func (c *ChatterBox) serverReceiver() {
 			glog.Infof("server acknowledged subscription to channel")
 			c.subscribed <- sm
 			c.UserUpdates <- sm.Users
+		case messages.SMUserUpdate:
+			c.UserUpdates <- sm.Users
 		default:
 			glog.Infof("dropping message of type %v, I don't understand the type", sm.Type)
 		}
