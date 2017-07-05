@@ -45,7 +45,7 @@ The files are best organized by using them as follows:
   state.go - Holds the constructor for a boutique.Store for your application
   actions.go - Holds the actions that will be used by the updaters to update the store
 	data.go - Holds the definition of your state object
-	middleware.go = Holds middleware for acting on changes to your data. This is not required
+	middleware.go = Holds middleware for acting on proposed changes to your data. This is not required
   modifiers.go - Holds all the Modifier(s) that are used by the boutique.Store to modify the store's data
 
 
@@ -56,6 +56,8 @@ Example
 Please see github.com/johnsiilver/boutique for a complete guide to using this
 package.  Its complicated enough to warrant some documentation to guide you
 through.
+
+If your very impatient, there is an example directory with examples of verying complexity.
 */
 package boutique
 
