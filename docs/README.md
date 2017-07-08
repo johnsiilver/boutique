@@ -63,7 +63,7 @@ The second, runtime errors, happen when one of two events occur.  The type of
 data to be stored in Boutique is changed on a write.  The first data passed to
 the store is the only type that can be stored.  Any attempt to store a different
 type of data will result in an error.  The second way is if the data being
-stored in Boutique is not a struct type.  The top level data must be a struct.  
+stored in Boutique is not a struct type.  The top level data must be a struct.
 In a non-generic store, these would be caught by the compiler.  But these are
 are generally non-issues.
 
