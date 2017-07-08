@@ -72,8 +72,9 @@ type ChatterBox struct {
 	channel atomic.Value
 	kill    chan struct{}
 
-	user atomic.Value // holds a string
-	dead atomic.Value // holds a bool
+	user     atomic.Value // holds a string
+	dead     atomic.Value // holds a bool
+	deadOnce sync.Once
 
 	// Messages are text messages arriving from the server to this client.
 	Messages chan messages.Server
@@ -85,6 +86,8 @@ type ChatterBox struct {
 	ChannelDrop chan struct{}
 	// Subscribed is an update saying we've been subscribed to a comm channel.
 	Subscribed chan messages.Server
+	// Done indicates that the server connection is dead, this client is Done.
+	Done chan struct{}
 }
 
 // New is the constructor for ChatterBox.
@@ -111,6 +114,7 @@ func New(addr string) (*ChatterBox, error) {
 		UserUpdates:  make(chan []string, 10),
 		ChannelDrop:  make(chan struct{}, 1),
 		Subscribed:   make(chan messages.Server, 1),
+		Done:         make(chan struct{}),
 	}
 	c.dead.Store(false)
 	c.channel.Store("")
@@ -121,6 +125,8 @@ func New(addr string) (*ChatterBox, error) {
 
 // serverReceiver receives messages from the ChatterBox server.
 func (c *ChatterBox) serverReceiver() {
+	defer c.makeDead()
+
 	for {
 		var sm messages.Server
 
@@ -167,12 +173,18 @@ func (c *ChatterBox) readConn() chan interface{} {
 		sm := messages.Server{}
 		if err := c.conn.ReadJSON(&sm); err != nil {
 			glog.Errorf("problem reading message from server, killing the client connection: %s", err)
-			c.dead.Store(true)
 			ch <- err
 		}
 		ch <- sm
 	}()
 	return ch
+}
+
+func (c *ChatterBox) makeDead() {
+	c.deadOnce.Do(func() {
+		c.dead.Store(true)
+		close(c.Done)
+	})
 }
 
 // Subscribe to a new comm channel.
@@ -198,7 +210,7 @@ func (c *ChatterBox) Subscribe(comm, user string) (users []string, err error) {
 
 	msg := messages.Client{Type: messages.CMSubscribe, Channel: comm, User: user}
 	if err := c.conn.WriteJSON(msg); err != nil {
-		c.dead.Store(true)
+		c.makeDead()
 		return nil, fmt.Errorf("connection to server is broken, this client is dead: %s", err)
 	}
 
@@ -229,7 +241,7 @@ func (c *ChatterBox) Drop() error {
 
 	msg := messages.Client{Type: messages.CMDrop, Channel: comm, User: user}
 	if err := c.conn.WriteJSON(msg); err != nil {
-		c.dead.Store(true)
+		c.makeDead()
 		return fmt.Errorf("connection to server is broken, this client is dead: %s", err)
 	}
 
@@ -239,7 +251,7 @@ func (c *ChatterBox) Drop() error {
 		c.channel.Store("")
 		return nil
 	case <-time.After(5 * time.Second):
-		c.dead.Store(true)
+		c.makeDead()
 		return fmt.Errorf("never received drop acknowledge")
 	}
 }
