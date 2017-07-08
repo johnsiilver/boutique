@@ -79,6 +79,33 @@ func HandleIncrDecr(state interface{}, action boutique.Action) interface{} {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+// printer prints out changes to State.Goroutines, but with a maximum of
+// 1 second intervals.
+func printer(killMe, done chan struct{}, store *boutique.Store) {
+	defer close(done)
+	defer store.Perform(DecrGoroutines())
+
+	// Subscribe to the .Goroutines field changes.
+	ch, cancel, err := store.Subscribe("Goroutines")
+	if err != nil {
+		panic(err)
+	}
+	defer cancel() // Cancel our subscription when this goroutine ends.
+
+	for {
+		select {
+		case sig := <-ch: // This is the latest change to the .Goroutines field.
+			fmt.Println(sig.State.Data.(State).Goroutines)
+			// Put a 1 second pause in.  Remember, we won't receive 1000 increment
+			// signals and 1000 decrement signals.  We will always receive the
+			// latest data, which may be far less than 2000.
+			time.Sleep(1 * time.Second)
+		case <-killMe: // We were told to die.
+			return
+		}
+	}
+}
+
 func main() {
 	// Create our new Store with our default State{} object and our only
 	// Modifier.  We are not going to define Middleware, so we pass nil.
@@ -96,30 +123,7 @@ func main() {
 	// Write out our goroutine count as it changes.  Include this goroutine
 	// in the count.
 	store.Perform(IncrGoroutines(1))
-	go func() {
-		defer close(printerKilled)
-		defer store.Perform(DecrGoroutines())
-
-		// Subscribe to the .Goroutines field changes.
-		ch, cancel, err := store.Subscribe("Goroutines")
-		if err != nil {
-			panic(err)
-		}
-		defer cancel() // Cancel our subscription when this goroutine ends.
-
-		for {
-			select {
-			case sig := <-ch: // This is the latest change to the .Goroutines field.
-				fmt.Println(sig.State.Data.(State).Goroutines)
-				// Put a 1 second pause in.  Remember, we won't receive 1000 increment
-				// signals and 1000 decrement signals.  We will always receive the
-				// latest data, which may be far less than 2000.
-				time.Sleep(1 * time.Second)
-			case <-killPrinter: // We were told to die.
-				return
-			}
-		}
-	}()
+	go printer(killPrinter, printerKilled, store)
 
 	wg := sync.WaitGroup{}
 
