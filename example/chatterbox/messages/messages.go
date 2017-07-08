@@ -102,6 +102,9 @@ const (
 	SMSubAck = 3
 	// SMUserUpdate updates a client with the users in the room.
 	SMUserUpdate = 4
+	// SMChannelDrop indicates that the we have received the new subscription
+	// request and dropped the person out of the existing channel.
+	SMChannelDrop = 5
 )
 
 // Server is a message that is sent from the server.
