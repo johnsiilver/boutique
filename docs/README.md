@@ -395,13 +395,13 @@ Boutique provides storage that is best designed in a modular method:
 The files are best organized by using them as follows:
 
 * state.go - Holds the constructor for a boutique.Store for your application
-* actions.go - Holds the actions that will be used by the updaters to update
-the store
+* actions.go - Holds the actions that will be used by the **Modifiers** to
+  update the store
 * data.go - Holds the definition of your state object
 * middleware.go = Holds middleware for acting on proposed changes to your data.
-This is not required
+  This is not required
 * modifiers.go - Holds all the Modifier(s) that are used by the boutique.Store
-to modify the store's data
+  to modify the store's data
 
 **Note**: These are all simply suggestions, you can combine this in a
 single file or name the files whatever you wish.
@@ -705,7 +705,7 @@ func New(channelName string, serverID string) (*Hub, error) {
 		Messages: []data.Message{},
 	}
 
-	s, err := boutique.New(d, updaters.All, nil)
+	s, err := boutique.New(d, modifiers.All, nil)
 	if err != nil {
 		return nil, err
 	}
