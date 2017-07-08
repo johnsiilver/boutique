@@ -11,6 +11,7 @@ import (
 var addr = flag.String("addr", ":6024", "websocket address")
 
 func main() {
+	flag.Parse()
 	cb := server.New()
 
 	http.HandleFunc("/", cb.Handler)
