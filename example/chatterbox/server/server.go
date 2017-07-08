@@ -111,6 +111,7 @@ func (c *ChatterBox) subscribe(ctx context.Context, cancel context.CancelFunc, c
 		}
 		return nil, fmt.Errorf("could not subscribe user %s: %s", m.User, err)
 	}
+	glog.Infof("client %v: subscribed to %s as %s", conn.RemoteAddr(), m.User, m.Channel)
 	return hub, nil
 }
 
