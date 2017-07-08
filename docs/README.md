@@ -85,13 +85,321 @@ http://github.com/johnsiilver/boutique/example/chatterbox
 Stock buy/sell point notifier using desktop notifications:
 http://github.com/johnsiilver/boutique/example/notifier
 
-## Let's get started!
+## What does using Boutique look like?
 
-### First, define what data you want to store
+Forgetting all the setup, usage looks like this:
+```go
+// Create a boutique.Store which holds the State object (not defined here)
+// with a Modifier function called AddUser (for changing field State.User).
+store, err := boutique.New(State{}, boutique.NewModifiers(AddUser), nil)
+if err != nil {
+	// Do something
+}
+
+// Create a subscription to changes in the "Users" field.
+userNotify, cancel, err := store.Subscribe("Users")
+if err != nil {
+	// Do something
+}
+defer cancel()  // Cancel our subscription when the function closes.
+
+// Print out the user list whenever State.Users changes.
+go func(){
+	for signal := range userNotify {
+		fmt.Println("current users:")
+		for _, user := range signal.State.Data(State).Users {
+			fmt.Printf("\t%s\n", user)
+		}
+	}
+}()
+
+// Change field .Users to contain "Mary".
+if err := store.Perform(AddUser("Mary")); err != nil {
+	// Do something.
+}
+
+// Change field .Users to contain "Joe".
+if err := store.Perform(AddUser("Joe")); err != nil {
+	// Do something.
+}
+
+// We can also just grab the state at any time.
+s := store.State()
+fmt.Println(s.Version)  // The current version of the Store.
+fmt.Println(s.FieldVersions["Users"]) // The version of the .Users field.
+fmt.Println(s.Data.(State).Users) // The .Users field.
+
+```
+Key things to note here:
+
+* The State object retrieved from the signal requires no read locks.
+* Perform() calls to do not require manual locks.
+* Everything is versioned.
+* Subscribers only receive the **latest**, not every update.  This cuts down on
+unnecessary processing (it is possible, with Middleware to get every update).
+* This is just scratching the surface with what you can do, especially with
+Middleware.
+
+## Start simply: the basics
+
+http://github.com/johnsiilver/boutique/example/basic
+
+This application simply spins up a bunch of goroutines and we use a
+boutique.Store to track the number of goroutines running.
+
+In itself, not practical, but it will help define our concepts.
+
+### First, define what datat you want to store
 
 To start with, the data to be stored must be of type struct.  Now to be clear,
 this cannot be \*struct, it must be a plain struct.  It is also important to
 note that only public fields can received notification of subscriber changes.
+
+Here's the state we want to store:
+```go
+// State is our state data for Boutique.  This is what data we want to store.
+type State struct {
+	// Goroutines is how many goroutines we are running.
+	Goroutines int
+}
+```
+
+### Now, we need to define Actions for making changes to the State
+
+```go
+// These are our ActionTypes.  This inform us of what kind of change we want
+// to do with an Action.
+const (
+	// ActIncr indicates we are incrementing the Goroutines field.
+	ActIncr boutique.ActionType = iota
+
+	// ActDecr indicates we are decrementing the Gorroutines field.
+	ActDecr
+)
+
+// IncrGoroutines creates an ActIncr boutique.Action.
+func IncrGoroutines(n int) boutique.Action {
+	return boutique.Action{Type: ActIncr, Update: n}
+}
+
+// DecrGoroutines creates and ActDecr boutique.Action.
+func DecrGoroutines() boutique.Action {
+	return boutique.Action{Type: ActDecr}
+}
+```
+Here we have two Action creator functions:
+* IncrGoroutines which is used to increment the Goroutines count by n
+* DecrGoroutines which is used to decrement the Goroutines count by 1
+
+**boutique.Action** contains two fields:
+* Type - Indicates the type of change that is to be made
+* Update - a blank interface{} where you can store whatever information
+	is needed for the change.  In the case of an ActIncr change, it is the
+	number of Goroutines we are adding.  It can also be nil, as sometimes you only
+	need the Type to make the change.
+
+### Define our Modifiers, which are what implement a change to the State
+
+```go
+// HandleIncrDecr is a boutique.Modifier for handling ActIncr and ActDecr boutique.Actions.
+func HandleIncrDecr(state interface{}, action boutique.Action) interface{} {
+	s := state.(State)
+
+	switch action.Type {
+	case ActIncr:
+		s.Goroutines = s.Goroutines + action.Update.(int)
+	case ActDecr:
+		s.Goroutines = s.Goroutines - 1
+	}
+
+	return s
+}
+```
+We only have a single Modifier which handles Actions of type **ActIncr** and
+**ActDecr**.  We could have made two Modifier(s), but opted for a single one.
+
+A modifier has to implement the following signature:
+```go
+type Modifier func(state interface{}, action Action) interface{}
+```
+
+So let's talk about what is going on.  First, we transform the **copy** of our
+State object into its concrete state (instead of interface{}).  
+
+Now we check to see if this is an action.Type we handle.  If not, we simply
+skip doing anything (which will return the State as it was before the
+Modifier was called).
+
+If it was an ActIncr Action, we increment .Goroutines by action.Update, which
+will be of type int.
+
+If it was an ActDecr Action, we decrement .Goroutines by 1.
+
+### Let's create a subscriber to print out the current .Gouroutines number
+```go
+func printer(killMe, done chan struct{}, store *boutique.Store) {
+	defer close(done)
+	defer store.Perform(DecrGoroutines())
+
+	// Subscribe to the .Goroutines field changes.
+	ch, cancel, err := store.Subscribe("Goroutines")
+	if err != nil {
+		panic(err)
+	}
+	defer cancel() // Cancel our subscription when this goroutine ends.
+
+	for {
+		select {
+		case sig := <-ch: // This is the latest change to the .Goroutines field.
+			fmt.Println(sig.State.Data.(State).Goroutines)
+			// Put a 1 second pause in.  Remember, we won't receive 1000 increment
+			// signals and 1000 decrement signals.  We will always receive the
+			// latest data, which may be far less than 2000.
+			time.Sleep(1 * time.Second)
+		case <-killMe: // We were told to die.
+			return
+		}
+	}
+}
+```
+The **close()** lets others know when this printer dies.
+
+The **store.Perform(DecrGoroutines())** reduces our goroutine count by 1 when
+the printer ends.
+
+```go
+// Subscribe to the .Goroutines field changes.
+ch, cancel, err := store.Subscribe("Goroutines")
+if err != nil {
+	panic(err)
+}
+defer cancel() // Cancel our subscription when this goroutine ends.
+```
+Here we subscribe to the .Goroutines field.  Whenever an update happens to this
+field, we will get notified on channel **ch**.  
+
+However, we will only get the **latest** update, not every update.
+This is important to remember.
+
+**cancel()*** cancels the subscription when the printer ends.
+
+```go
+for {
+	select {
+	case sig := <-ch: // This is the latest change to the .Goroutines field.
+		fmt.Println(sig.State.Data.(State).Goroutines)
+		// Put a 1 second pause in.  Remember, we won't receive 1000 increment
+		// signals and 1000 decrement signals.  We will always receive the
+		// latest data, which may be far less than 2000.
+		time.Sleep(1 * time.Second)
+	case <-killPrinter: // We were told to die.
+		return
+	}
+}
+```
+Finally we loop and listen for one of two things to happen:
+
+* We get a signal that .Goroutines has changed and print the value.
+* We have been signaled to die, so we kill the printer goroutine by returning.
+
+### Let's create our main()
+
+```go
+func main() {
+	// Create our new Store with our default State{} object and our only
+	// Modifier.  We are not going to define Middleware, so we pass nil.
+	store, err := boutique.New(State{}, boutique.NewModifiers(HandleIncrDecr), nil)
+	if err != nil {
+		panic(err)
+	}
+```
+
+Now we start using what we've created.  Here you can see we create the
+new boutique.Store instance.  We pass it the initial state, **State** and
+we give it a collection of **Modifier(s)**.  In our case we only have one
+**Modifier**, so we pass **HandleIncrDecr**.  The final **nil** simply indicates
+that we are not passing any Middleware (we talk about it later).
+
+```go
+// killPrinter lets us signal our printer goroutine that we no longer need
+// its services.
+killPrinter := make(chan struct{})
+// printerKilled informs us that the printer goroutine has exited.
+printerKilled := make(chan struct{})
+
+go printer()
+```
+Now we create a couple of channels to signal that we want **printer()** to die
+and another let us know **printer()** has died.  We then kick off our
+**printer()**.
+
+```go
+wg := sync.WaitGroup{}
+
+// Spin up a 1000 goroutines that sleep between 0 and 5 seconds.
+// Pause after generating every 100 for 0 - 8 seconds.
+for i := 0; i < 1000; i++ {
+	if i%100 == 0 {
+		time.Sleep(time.Duration(rand.Intn(8)) * time.Second)
+	}
+	store.Perform(IncrGoroutines(1))
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer store.Perform(DecrGoroutines())
+		time.Sleep(time.Duration(rand.Intn(5)) * time.Second)
+	}()
+}
+
+wg.Wait()          // Wait for the goroutines to finish.
+close(killPrinter) // kill the printer.
+<-printerKilled    // wait for the printer to die.
+
+fmt.Printf("Final goroutine count: %d\n", store.State().Data.(State).Goroutines)
+fmt.Printf("Final Boutique.Store version: %d\n", store.Version())
+```
+
+Now into the final stretch.  We kick off 1000 goroutines, pausing for 8 seconds
+after spinning off every 100.  Every time we spin off a goroutine, we
+increment our goroutine count with a **Perform()** call and increment a
+**sync.WaitGroup** so we know when all goroutines are done.  
+
+We then wait for all goroutines to finish, kill the **printer()** and print out
+some values from the Store.
+
+
+## Let's try a more complex example!
+
+###  A little about file layout
+
+Boutique provides storage that is best designed in a modular method:
+
+  └── state
+    ├── state.go
+    ├── actions
+    │   └── actions.go
+		├── data
+		|   └── data.go
+		├── middleware
+		|   └── middleware.go
+    └── modifiers
+        └── modifiers.go
+
+The files are best organized by using them as follows:
+
+* state.go - Holds the constructor for a boutique.Store for your application
+* actions.go - Holds the actions that will be used by the updaters to update
+the store
+* data.go - Holds the definition of your state object
+* middleware.go = Holds middleware for acting on proposed changes to your data.
+This is not required
+* modifiers.go - Holds all the Modifier(s) that are used by the boutique.Store
+to modify the store's data
+
+**Note**: These are all simply suggestions, you can combine this in a
+single file or name the files whatever you wish.
+
+### First, define what data you want to store
 
 For this example we are going to use the example application ChatterBox included
 with Boutique.  This provides an IRC like service using websockets.  Users
@@ -105,7 +413,6 @@ We are going to include middleware that:
 
  * Prevents messages being sent over 500 characters.
  * Allows debug logging of the boutique.Store as it is updated.
- * Allows logging of all channel communications to a file.
  * Deletes older messages in the boutique.Store that are no longer needed.
 
 This example is not going to include all of the application's functions, just
@@ -148,41 +455,17 @@ type State struct {
 	Messages []Message
 ```
 
-First there is the State object.  This is the
-center of our Boutique universe per say.  All changes happen to this object.
-Each comm channel that is opened for users to communicate on has its own
-State object.  
+First there is the State object. Each comm channel that is opened for users to
+communicate on has its own State object.  
 
 Inside here, we have different attributes related to the state of the channel.
-ServerID lets us identify the particular instance's log files, Channel holds
-the name of our channel.  Users is the list of current users in the Channel,
-while Messages is the current buffer of user messages waiting to be sent out
-to the users.
+**ServerID** lets us identify the particular instance's log files,
+**Channel** holds the name of our channel.  Users is the list of current users
+in the **Channel**, while **Messages** is the current buffer of user messages
+waiting to be sent out to the users.
 
-Now that we have our data to store in Boutique, let us talk about how to
-signal a change to the store, via **Actions**.
 
 ### Create our actions
-
-Changes to the data stored in Boutique is done via the Perform() method.
-One of the arguments to Perform is an Action, which tells the program to
-alter its state in some way.  
-
-A boutique.Action contains two fields:
-
-* Type, which indicates a type of action that is being committed to the store.
-* Update, which can be nil or contain a type that is used in updating the store.
-This may be a value that will be placed in a field, a key that will be deleted
-from a map, or whatever is needed.
-
-Its important that you understand that this simply signals a change, it does
-not make a change.  You don't always need .Update, because sometimes the signal
-via Type is enough.  Say you had a field, Version, that needed to be
-incremented.  It would simply be enough to pass an Action with type
-that indicated this was the action needed.  
-
-But often times, you need to do more, such as change a value, merge two
-structs, etc.  That is when Update is used, to pass the value.
 
 Here I'm going to include a smaller version of the actions.go from our example
 application, to keep it simple.
@@ -251,26 +534,9 @@ SendMessage takes in the user sending the message, and the text
 message itself. It creates a boutique.Action setting the Type to ActSendMessage
 and the Update to a data.Message, which we will use to update our store.
 
-Now, we have **Actions** that describe the changes we want to do, but how do we
-make those changes?  
-
 ### Writing Modifiers
 
-**Modifier(s)** interpret **Actions** and handle updating the data in the store.  All
-**Modifier(s)** must conform to the following signature which is defined by
-boutique.Modifier:
-
-```go
-type Modifier func(state interface{}, action Action) interface{}
-```
-
-The "state" is the data object that will get updated.  In our case,
-this would be data.State that we defined in package data.  "action" is the
-boutique.Action that is to be processed.  A Modifier does NOT have to handle a
-specific Action Type, it only has to handle the **Actions** it is designed to
-ecognizes. If it does not recognize the action.Type, it should simply return
-state as it was passed.  Otherwise Modifier returns the updated state object.
-
+So we need to touch on something we did not talk about in our first example.
 There is a fundamental rule that MUST be obeyed by all **Modifier(s)**:
 
 **THOU SHALL NOT MUTATE DATA!**
@@ -286,6 +552,9 @@ cache.
 
 The only exception to this is synchronization Types that can be copied, such
 as a channel or \*sync.WaitGroup.  Do this sparingly!
+
+We provide a few utility functions such as **CopyAppendSlice()**,
+**ShallowCopy()**, and **DeepCopy()** to help ease this.
 
 Here are some **Modifier(s)** to handle our **Actions**.  We could write one
 Modifier to handle all **Actions** or multiple **Modifier(s)** handling each
