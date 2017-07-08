@@ -13,12 +13,12 @@ import (
 )
 
 var (
-	comm atomic.Value // string
+	comm   atomic.Value // string
+	errors []error
 )
 
 func main() {
 	flag.Parse()
-	errors := []error{}
 
 	comm.Store("")
 
@@ -126,6 +126,9 @@ func fromServer(c *client.ChatterBox, wg *sync.WaitGroup, displays ui.Displays, 
 			displays.Msgs <- fmt.Sprintf("Server Error: %s", e)
 		case u := <-c.UserUpdates:
 			displays.Users <- u
+		case <-c.Done:
+			errors = append(errors, fmt.Errorf("connection broken with server"))
+			return
 		}
 	}
 }
