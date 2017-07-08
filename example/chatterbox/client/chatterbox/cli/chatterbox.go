@@ -1,24 +1,27 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
-	"github.com/gizak/termui"
-	"github.com/golang/glog"
 	"github.com/johnsiilver/boutique/example/chatterbox/client"
 	"github.com/johnsiilver/boutique/example/chatterbox/client/chatterbox/cli/ui"
 )
 
+var (
+	comm atomic.Value // string
+)
+
 func main() {
+	flag.Parse()
 	errors := []error{}
 
-	err := termui.Init()
-	if err != nil {
-		panic(err)
-	}
+	comm.Store("")
+
 	defer func() {
 		for _, err := range errors {
 			fmt.Println(err)
@@ -28,93 +31,89 @@ func main() {
 		}
 	}()
 
-	defer termui.Close()
-	defer termui.StopLoop()
-
-	if len(os.Args) != 4 {
+	if len(os.Args) != 2 {
 		fmt.Println("usage error: chatterbox <server:port> <user name> <channel>")
 		fmt.Println("got: ", strings.Join(os.Args, " "))
 		return
 	}
 
 	server := os.Args[1]
-	user := os.Args[2]
-	comm := os.Args[3]
-
-	// Communications setup.
-	usersCh := make(chan []string, 1)
-	inputCh := make(chan string, 1)
-	msgsCh := make(chan string, 1)
-	msgSendCh := make(chan string, 1)
 
 	// Connection to server setup.
-	c, err := client.New(server, user)
+	c, err := client.New(server)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("error connecting to server: %s", err))
 		return
 	}
 
-	if err := subscribe(c, comm, usersCh); err != nil {
-		errors = append(errors, fmt.Errorf("error connecting to channel: %s", err))
-		return
-	}
-	msgsCh <- fmt.Sprintf("Subscribed: %s", comm)
-
 	wg := &sync.WaitGroup{}
 	stop := make(chan struct{})
 
-	go toServer(c, msgSendCh, stop)
-	wg.Add(1)
-	go fromServer(c, user, wg, msgsCh, usersCh, stop)
-
-	// UI setup.
-	reRender := []chan struct{}{
-		make(chan struct{}, 1),
-		make(chan struct{}, 1),
-		make(chan struct{}, 1),
+	// Create our UI.
+	term, display, input := ui.New(stop)
+	if err := term.Start(); err != nil {
+		errors = append(errors, fmt.Errorf("Error: problem initing the terminal UI: %s", err))
+		return
 	}
+	defer term.Stop()
 
-	ui.UsersDisplay(usersCh, reRender[0])
-	ui.InputDisplay(inputCh, reRender[1])
-	ui.MessagesDisplay(msgsCh, reRender[2])
 	wg.Add(1)
-	ui.Input(
-		wg,
-		ui.InputArgs{
-			ReRender:   reRender,
-			Stop:       stop,
-			InputLine:  inputCh,
-			MsgSend:    msgSendCh,
-			MsgDisplay: msgsCh,
-		},
-	)
+	go inputRouter(c, display, input, stop)
+	go fromServer(c, wg, display, stop)
 
 	// We will wait until the ui.Input() gets a /quit.
 	wg.Wait()
 }
 
-func subscribe(c *client.ChatterBox, comm string, userDisplay chan []string) error {
-	// Must subscribe before doing anything else.
-	users, err := c.Subscribe(comm)
-	if err != nil {
-		return err
+func subscribe(c *client.ChatterBox, channel string, user string, displays ui.Displays) error {
+	if comm.Load().(string) != "" {
+		if err := c.Drop(); err != nil {
+			return fmt.Errorf("could not drop from existing channel %s", comm.Load().(string))
+		}
 	}
+	// Must subscribe before doing anything else.
+	users, err := c.Subscribe(channel, user)
+	if err != nil {
+		return fmt.Errorf("could not subscribe to channel %s: %s", channel, err)
+	}
+	comm.Store(channel)
+	comm.Store(user)
 
-	userDisplay <- users
+	displays.Users <- users
 	return nil
 }
 
-func toServer(c *client.ChatterBox, msgSendCh chan string, stop chan struct{}) {
+func inputRouter(c *client.ChatterBox, displays ui.Displays, inputs ui.Inputs, stop chan struct{}) {
 	defer close(stop)
-	for msg := range msgSendCh {
-		if err := c.SendText(msg); err != nil {
-			glog.Errorf("Error: %s, lost connection to server. Please quit\n", err)
-			return
+	for {
+		select {
+		case msg := <-inputs.Msgs:
+			if comm.Load().(string) == "" {
+				displays.Msgs <- fmt.Sprintf("not subscribed to channel")
+			} else if err := c.SendText(msg); err != nil {
+				// TODO(johnsiilver): This isn't going to work, because the UI is going to die.
+				// Add a channel for after UI messages.  Or maybe don't kill the UI?
+				displays.Msgs <- fmt.Sprintf("Error: %s, lost connection to server. Please quit", err)
+				return
+			}
+		case cmd := <-inputs.Cmds:
+			switch cmd.Name {
+			case "quit":
+				displays.Msgs <- fmt.Sprintf("quiting...")
+				return
+			case "subscribe":
+				displays.Msgs <- fmt.Sprintf("setting comm to %s, user to %s", cmd.Args[0], cmd.Args[1]) // debug, remove
+				if err := subscribe(c, cmd.Args[0], cmd.Args[1], displays); err != nil {
+					displays.Msgs <- fmt.Sprintf("Subscribe error: %s", err)
+					return
+				}
+				cmd.Resp <- fmt.Sprintf("Subscribed to channel: %s as user %s", cmd.Args[0], cmd.Args[1])
+			}
 		}
 	}
 }
 
-func fromServer(c *client.ChatterBox, user string, wg *sync.WaitGroup, msgDisplay chan string, userDisplay chan []string, stop <-chan struct{}) {
+func fromServer(c *client.ChatterBox, wg *sync.WaitGroup, displays ui.Displays, stop <-chan struct{}) {
 	defer wg.Done()
 
 	for {
@@ -122,16 +121,11 @@ func fromServer(c *client.ChatterBox, user string, wg *sync.WaitGroup, msgDispla
 		case <-stop:
 			return
 		case m := <-c.Messages:
-			msgDisplay <- fmt.Sprintf("%s: %s", m.User, strings.TrimSpace(m.Text.Text))
+			displays.Msgs <- fmt.Sprintf("%s: %s", m.User, strings.TrimSpace(m.Text.Text))
 		case e := <-c.ServerErrors:
-			msgDisplay <- fmt.Sprintf("Server Error: %s", e)
+			displays.Msgs <- fmt.Sprintf("Server Error: %s", e)
 		case u := <-c.UserUpdates:
-			userDisplay <- u
+			displays.Users <- u
 		}
 	}
 }
-
-/*
-ERROR: logging before flag.Parse: E0704 12:37:12.450426   25685 client.go:154] problem reading message from server, killing the client connection: websocket: close 1006 (abnormal closure): unexpected EOF                                                                   ││                       │
-ERROR: logging before flag.Parse: E0704 12:37:12.450481   25685 client.go:121] client error receiving from server, client is dead: websocket: close 1006 (abnormal closure): unexpected EOF
-*/

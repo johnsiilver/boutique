@@ -23,8 +23,10 @@ var upgrader = websocket.Upgrader{
 }
 
 type channel struct {
-	hub   *state.Hub
-	users map[string]bool
+	ctx    context.Context
+	cancel context.CancelFunc
+	hub    *state.Hub
+	users  map[string]bool
 }
 
 // ChatterBox implements a websocket server for sending messages in channels.
@@ -41,48 +43,22 @@ func New() *ChatterBox {
 
 // Handler implements http.HandleFunc.
 func (c *ChatterBox) Handler(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		glog.Errorf("error connecting to server: %s", err)
 		return
 	}
 
-	m, err := c.read(conn)
-	if err != nil {
-		glog.Error(err)
-		return
-	}
-
-	if m.Type != messages.CMSubscribe {
-		glog.Errorf("first message on a websocket must be of type Subscribe")
-		return
-	}
-
-	if err = m.Validate(); err != nil {
-		glog.Error(err)
-		return
-	}
-
-	state, err := c.subscribe(conn, m)
-	if err != nil {
-		return
-	}
-	defer c.unsubscribe(m.User, m.Channel)
-
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 
-	go c.clientReceiver(cancel, wg, m.User, m.Channel, conn, state.Store)
-	go c.clientSender(ctx, wg, m.User, m.Channel, conn, state.Store)
+	go c.clientReceiver(r.Context(), wg, conn)
 
 	wg.Wait()
 }
 
 // subscribe subscribes a user to the channel.
-func (c *ChatterBox) subscribe(conn *websocket.Conn, m messages.Client) (*state.Hub, error) {
+func (c *ChatterBox) subscribe(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, m messages.Client) (*state.Hub, error) {
 	c.chMu.Lock()
 	defer c.chMu.Unlock()
 
@@ -111,7 +87,7 @@ func (c *ChatterBox) subscribe(conn *websocket.Conn, m messages.Client) (*state.
 		if err != nil {
 			return nil, err
 		}
-		mchan = &channel{hub: hub, users: map[string]bool{m.User: true}}
+		mchan = &channel{ctx: ctx, cancel: cancel, hub: hub, users: map[string]bool{m.User: true}}
 		c.channels[m.Channel] = mchan
 	}
 
@@ -135,7 +111,7 @@ func (c *ChatterBox) subscribe(conn *websocket.Conn, m messages.Client) (*state.
 		}
 		return nil, fmt.Errorf("could not subscribe user %s: %s", m.User, err)
 	}
-	return mchan.hub, nil
+	return hub, nil
 }
 
 // unsubscribe unsubscribes user "u" from channel "c".
@@ -148,6 +124,7 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 		return
 	}
 
+	mchan.cancel()
 	delete(mchan.users, u)
 	if err := mchan.hub.Store.Perform(actions.RemoveUser(u)); err != nil {
 		glog.Errorf("problem removing user from Store: %s", err)
@@ -157,31 +134,101 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 // clientReceiver is used to process messages that are received over the websocket from the client.
 // This is meant to be run in a goroutine as it blocks for the life of the conn and decrements
 // wg when it finally ends.
-func (c *ChatterBox) clientReceiver(cancel context.CancelFunc, wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+func (c *ChatterBox) clientReceiver(ctx context.Context, wg *sync.WaitGroup, conn *websocket.Conn) {
 	defer wg.Done()
+
+	var (
+		cancel context.CancelFunc
+		hub    *state.Hub
+		user   string
+		comm   string
+	)
+	defer c.unsubscribe(user, comm)
 
 	for {
 		m, err := c.read(conn)
 		if err != nil {
-			glog.Errorf("client %s with user %s terminated its connection", conn.RemoteAddr(), usr)
-			cancel()
+			glog.Errorf("client %s terminated its connection", conn.RemoteAddr())
+			if cancel != nil {
+				cancel()
+			}
 			return
-		}
-		if m.Type != messages.CMSendText {
-			glog.Errorf("error: connected client for user %s on channel %s sent message of type %v after init stage", usr, chName, m.Type)
-			continue
 		}
 
 		err = m.Validate()
 		if err != nil {
+			glog.Errorf("error: client %v message did not validate: %v: %#+v: ignoring...", conn.RemoteAddr(), err, m)
 			if err = c.sendError(conn, err); err != nil {
 				return
 			}
 			continue
 		}
 
-		if err := store.Perform(actions.SendMessage(usr, m.Text.Text)); err != nil {
-			if err = c.sendError(conn, fmt.Errorf("problem calling store.Perform(): %s", err)); err != nil {
+		switch t := m.Type; t {
+		case messages.CMSendText:
+			if hub == nil {
+				if err := c.sendError(conn, fmt.Errorf("cannot send a message, not subscribed to channel")); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+					return
+				}
+			}
+
+			if err := hub.Store.Perform(actions.SendMessage(user, m.Text.Text)); err != nil {
+				c.sendError(conn, fmt.Errorf("problem calling store.Perform(): %s", err))
+				continue
+			}
+		case messages.CMSubscribe:
+			ctx, cancel = context.WithCancel(context.Background())
+			defer cancel()
+
+			// If we already are subscribed, unsubscribe.
+			if hub != nil {
+				c.unsubscribe(user, comm)
+				if err := c.write(conn, messages.Server{Type: messages.SMChannelDrop}); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+					return
+				}
+				if cancel != nil {
+					cancel()
+				}
+			}
+
+			// Now subscribe to the new channel.
+			var err error
+			hub, err = c.subscribe(ctx, cancel, conn, m)
+			if err != nil {
+				if err = c.sendError(conn, err); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				}
+				return
+			}
+			user = m.User
+			comm = m.Channel
+
+			go c.clientSender(ctx, user, comm, conn, hub.Store)
+		case messages.CMDrop:
+			if hub == nil {
+				if err := c.sendError(conn, fmt.Errorf("error: cannot drop a channel, your not subscribed to any")); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+					return
+				}
+			}
+			if cancel != nil {
+				cancel()
+			}
+			c.unsubscribe(user, comm)
+
+			if err := c.write(conn, messages.Server{Type: messages.SMChannelDrop}); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				return
+			}
+			hub = nil
+			user = ""
+			comm = ""
+		default:
+			glog.Errorf("error: client %v had unknown message %v, ignoring", conn.RemoteAddr(), t)
+			if err := c.sendError(conn, fmt.Errorf("received message type from client %v that the server doesn't understand", t)); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
 				return
 			}
 		}
@@ -190,13 +237,11 @@ func (c *ChatterBox) clientReceiver(cancel context.CancelFunc, wg *sync.WaitGrou
 
 // clientSender receives changes to the store's Messaages field and pushes them out to
 // our websocket clients.
-func (c *ChatterBox) clientSender(ctx context.Context, wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+func (c *ChatterBox) clientSender(ctx context.Context, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
 	const (
 		msgField   = "Messages"
 		usersField = "Users"
 	)
-
-	defer wg.Done()
 
 	state := store.State()
 	startData := state.Data.(data.State)
@@ -248,7 +293,7 @@ func (c *ChatterBox) clientSender(ctx context.Context, wg *sync.WaitGroup, usr s
 }
 
 func (c *ChatterBox) sendError(conn *websocket.Conn, err error) error {
-	glog.Error(err)
+	glog.ErrorDepth(1, err)
 	wErr := c.write(
 		conn,
 		messages.Server{

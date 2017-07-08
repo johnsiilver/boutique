@@ -81,12 +81,14 @@ type ChatterBox struct {
 	ServerErrors chan error
 	// UserUpdates are updates to the users who are in the comm channel.
 	UserUpdates chan []string
-
-	subscribed chan messages.Server
+	// ChannelDrop are updates saying we've been unsubscribed to a comm channel.
+	ChannelDrop chan struct{}
+	// Subscribed is an update saying we've been subscribed to a comm channel.
+	Subscribed chan messages.Server
 }
 
 // New is the constructor for ChatterBox.
-func New(addr string, username string) (*ChatterBox, error) {
+func New(addr string) (*ChatterBox, error) {
 	d := websocket.Dialer{
 		HandshakeTimeout:  10 * time.Second,
 		ReadBufferSize:    1024,
@@ -107,9 +109,9 @@ func New(addr string, username string) (*ChatterBox, error) {
 		ServerErrors: make(chan error, 10),
 		Messages:     make(chan messages.Server, 10),
 		UserUpdates:  make(chan []string, 10),
-		subscribed:   make(chan messages.Server, 1),
+		ChannelDrop:  make(chan struct{}, 1),
+		Subscribed:   make(chan messages.Server, 1),
 	}
-	c.user.Store(username)
 	c.dead.Store(false)
 	c.channel.Store("")
 
@@ -117,7 +119,7 @@ func New(addr string, username string) (*ChatterBox, error) {
 	return c, nil
 }
 
-// serverReceiver receives mdsssages from the ChatterBox server.
+// serverReceiver receives messages from the ChatterBox server.
 func (c *ChatterBox) serverReceiver() {
 	for {
 		var sm messages.Server
@@ -144,10 +146,12 @@ func (c *ChatterBox) serverReceiver() {
 			c.Messages <- sm
 		case messages.SMSubAck:
 			glog.Infof("server acknowledged subscription to channel")
-			c.subscribed <- sm
+			c.Subscribed <- sm
 			c.UserUpdates <- sm.Users
 		case messages.SMUserUpdate:
 			c.UserUpdates <- sm.Users
+		case messages.SMChannelDrop:
+			c.ChannelDrop <- struct{}{}
 		default:
 			glog.Infof("dropping message of type %v, I don't understand the type", sm.Type)
 		}
@@ -171,10 +175,14 @@ func (c *ChatterBox) readConn() chan interface{} {
 	return ch
 }
 
-// Subscribe to a new comm channel.  This must be the first method called or it will get rejected.
-func (c *ChatterBox) Subscribe(name string) (users []string, err error) {
-	if name == "" {
-		return nil, fmt.Errorf("Subcribe(name) cannot be empty string")
+// Subscribe to a new comm channel.
+func (c *ChatterBox) Subscribe(comm, user string) (users []string, err error) {
+	if comm == "" {
+		return nil, fmt.Errorf("cannot subscribe to an unnamed comm channel")
+	}
+
+	if user == "" {
+		return nil, fmt.Errorf("cannot subscribe with an empty user name")
 	}
 
 	if c.dead.Load().(bool) {
@@ -185,21 +193,54 @@ func (c *ChatterBox) Subscribe(name string) (users []string, err error) {
 	defer c.mu.Unlock()
 
 	if c.channel.Load().(string) != "" {
-		return nil, fmt.Errorf("cannot subscribe to channel %s, you must unsubscribed to channel %s", name, c.channel.Load().(string))
+		return nil, fmt.Errorf("cannot subscribe to channel %s, you must unsubscribe to channel %s", comm, c.channel.Load().(string))
 	}
 
-	msg := messages.Client{Type: messages.CMSubscribe, Channel: name, User: c.user.Load().(string)}
+	msg := messages.Client{Type: messages.CMSubscribe, Channel: comm, User: user}
 	if err := c.conn.WriteJSON(msg); err != nil {
 		c.dead.Store(true)
 		return nil, fmt.Errorf("connection to server is broken, this client is dead: %s", err)
 	}
 
 	select {
-	case m := <-c.subscribed:
-		c.channel.Store(name)
+	case m := <-c.Subscribed:
+		c.user.Store(user)
+		c.channel.Store(comm)
 		return m.Users, nil
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("never received subscribe acknowledge")
+	}
+}
+
+// Drop disconnects from a comm channel channel.
+func (c *ChatterBox) Drop() error {
+	if c.dead.Load().(bool) {
+		return fmt.Errorf("this client's connection is dead, can't drop from a channel")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	comm := c.channel.Load().(string)
+	user := c.user.Load().(string)
+	if c.channel.Load().(string) == "" {
+		return nil
+	}
+
+	msg := messages.Client{Type: messages.CMDrop, Channel: comm, User: user}
+	if err := c.conn.WriteJSON(msg); err != nil {
+		c.dead.Store(true)
+		return fmt.Errorf("connection to server is broken, this client is dead: %s", err)
+	}
+
+	select {
+	case _ = <-c.ChannelDrop:
+		c.user.Store("")
+		c.channel.Store("")
+		return nil
+	case <-time.After(5 * time.Second):
+		c.dead.Store(true)
+		return fmt.Errorf("never received drop acknowledge")
 	}
 }
 
