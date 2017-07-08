@@ -383,11 +383,11 @@ Boutique provides storage that is best designed in a modular method:
   └── state
     ├── state.go
     ├── actions
-    │   └── actions.go
-		├── data
-		|   └── data.go
-		├── middleware
-		|   └── middleware.go
+    │   └── actions.go
+    ├── data
+    |   └── data.go
+    ├── middleware
+    |   └── middleware.go
     └── modifiers
         └── modifiers.go
 ```
