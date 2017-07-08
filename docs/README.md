@@ -67,7 +67,7 @@ stored in Boutique is not a struct type.  The top level data must be a struct.
 In a non-generic store, these would be caught by the compiler.  But these are
 are generally non-issues.
 
-The third is more difficult.  Changes are routed through **Actions**.  
+The third is more difficult.  Changes are routed through **Actions**.
 **Actions** trigger **Modifers**, which also must be written.  The concepts
 take a bit to understand and you have to be careful not to mutate the data when
 writing **Modifier(s)**.   This adds a certain amount of
@@ -135,8 +135,9 @@ Key things to note here:
 * The State object retrieved from the signal requires no read locks.
 * Perform() calls to do not require manual locks.
 * Everything is versioned.
-* Subscribers only receive the **latest**, not every update.  This cuts down on
-unnecessary processing (it is possible, with Middleware to get every update).
+* Subscribers only receive the **latest** update, not every update.
+This cuts down on unnecessary processing (it is possible, with Middleware
+to get every update).
 * This is just scratching the surface with what you can do, especially with
 Middleware.
 
@@ -149,7 +150,7 @@ boutique.Store to track the number of goroutines running.
 
 In itself, not practical, but it will help define our concepts.
 
-### First, define what datat you want to store
+### First, define what data you want to store
 
 To start with, the data to be stored must be of type struct.  Now to be clear,
 this cannot be \*struct, it must be a plain struct.  It is also important to
@@ -157,7 +158,7 @@ note that only public fields can received notification of subscriber changes.
 
 Here's the state we want to store:
 ```go
-// State is our state data for Boutique.  This is what data we want to store.
+// State is our state data for Boutique.
 type State struct {
 	// Goroutines is how many goroutines we are running.
 	Goroutines int
@@ -223,12 +224,17 @@ A modifier has to implement the following signature:
 type Modifier func(state interface{}, action Action) interface{}
 ```
 
-So let's talk about what is going on.  First, we transform the **copy** of our
-State object into its concrete state (instead of interface{}).  
+So let's talk about what is going on.  A **Modifier** is called when a change is
+being made to the boutique.Store.  It is passed a copy of the data that is
+stored.  We need to modify that data if the action that is passed is one that
+our Modifier is designed for.  
+
+First, we transform the **copy** of our State object into its concrete
+state (instead of interface{}).  
 
 Now we check to see if this is an action.Type we handle.  If not, we simply
-skip doing anything (which will return the State as it was before the
-Modifier was called).
+skip doing anything (which will return the state data as it was before the
+**Modifier** was called).
 
 If it was an ActIncr Action, we increment .Goroutines by action.Update, which
 will be of type int.
@@ -281,7 +287,7 @@ field, we will get notified on channel **ch**.
 However, we will only get the **latest** update, not every update.
 This is important to remember.
 
-**cancel()*** cancels the subscription when the printer ends.
+**cancel()** cancels the subscription when the printer ends.
 
 ```go
 for {
@@ -299,7 +305,7 @@ for {
 ```
 Finally we loop and listen for one of two things to happen:
 
-* We get a signal that .Goroutines has changed and print the value.
+* We get a **boutique.Signal** that .Goroutines has changed and print the value.
 * We have been signaled to die, so we kill the printer goroutine by returning.
 
 ### Let's create our main()
@@ -315,7 +321,7 @@ func main() {
 ```
 
 Now we start using what we've created.  Here you can see we create the
-new boutique.Store instance.  We pass it the initial state, **State** and
+new boutique.Store instance.  We pass it the initial state, **State{}** and
 we give it a collection of **Modifier(s)**.  In our case we only have one
 **Modifier**, so we pass **HandleIncrDecr**.  The final **nil** simply indicates
 that we are not passing any Middleware (we talk about it later).
@@ -373,7 +379,7 @@ some values from the Store.
 ###  A little about file layout
 
 Boutique provides storage that is best designed in a modular method:
-
+```
   └── state
     ├── state.go
     ├── actions
@@ -384,6 +390,7 @@ Boutique provides storage that is best designed in a modular method:
 		|   └── middleware.go
     └── modifiers
         └── modifiers.go
+```
 
 The files are best organized by using them as follows:
 
