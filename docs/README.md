@@ -1282,21 +1282,22 @@ type MWArgs struct {
 }
 ```
 
-So first we have Action.  By observing the Action.Type, you can see what the
-Action was that Perform() was called with.  Altering this has no effect.
+So first we have **Action**.  By observing the **Action.Type**, you can see
+what the **Action** was that **Perform()** was called with.
+Altering this has no effect.
 
-NewData is the NewData will result State.Data from the Action.  It has not
-been committed. Alerting this by itself will have no effect, but I will show
+**NewData** is the **State.Data** that will result from the Action.  It has not
+been committed. Altering this by itself will have no effect, but I will show
 how to alter it in a moment and affect a change.
 
-GetState is actually a function that you can call to get the current State
+**GetState** is  a function that you can call to get the current **State**
 object.
 
-Let's skip Committed for the moment, we'll get back to it later.
+Let's skip **Committed** for the moment, we'll get back to it later.
 
-WG is very important.  Your **Middleware** must call WG.Done() before exiting or
-your Perform() call will block forever.  There is a handy log message that
-catches these if your forget during development.
+**WG** is very important.  Your **Middleware** must call **WG.Done()** before
+exiting or your **Perform()** call will block forever.  There is a handy log
+message that catches these if your forget during development.
 
 Now that we have args out of the way, let's talk about the return values:
 
@@ -1304,15 +1305,16 @@ Now that we have args out of the way, let's talk about the return values:
 (changedData interface{}, stop bool, err error)
 ```
 
-changedData represents the State.Data you want to change. If you are not going
-to edit the data, then you can simply return nil here.  Otherwise you may
-modify args.NewData and then return it here to affect your change.
+**changedData** represents the **State.Data** with your changes, if any.
+If you are not going to edit the data, then you can simply return **nil** here.
+Otherwise you may modify **args.NewData** and then return it here to affect
+your change.
 
-stop is an indicator that you want to prevent other **Middleware** from
+**stop** is an indicator that you want to prevent other **Middleware** from
 executing and immediately commit the change.
 
-err indicates you wish to prevent the change and send an error to the Perform()
-caller.
+**err** indicates you wish to prevent the change and send an error to the
+**Perform()** caller.
 
 #### A synchronous Middleware
 
@@ -1363,11 +1365,12 @@ func CleanMessages(args *boutique.MWArgs) (changedData interface{}, stop bool, e
 }
 ```
 
-First thing: defer our args.WG.Done() call!  Not doing this will cause problems.
+First thing: defer our **args.WG.Done()** call!  Not doing this will cause
+problems.
 
-Next we need to go through our []data.Message until we locate the first index
-that is within our time limit.  Anything from there till the end of our slice
-does not need to be deleted.
+Next we need to go through our **[]data.Message** until we locate the first
+index that is within our time limit.  Anything from there till the end of our
+slice does not need to be deleted.
 
 ```go
 
@@ -1378,8 +1381,8 @@ for i, m = range d.Messages {
 	}
 }
 ```
-deleteAll simply lets us know if we find any Message not expired.  If we don't,
-we delete all messages.
+**deleteAll** simply lets us know if we find any **Message** not expired.
+If we don't, we delete all messages.
 
 Finally our switch statement handles all our cases.  Most are self explanatory,
 but there is one that we should look at:
@@ -1403,14 +1406,16 @@ Asynchronous **Middleware** is useful when you want to trigger something to
 happen or view the final committed data.  However, it comes with the limitation
 that you cannot alter the data.
 
- * Trigger third-party code and you don't need to modify data
- * You want to trigger something to happen after the commit to the store occurs
+Use asynchronous Middleware when:
+* Triggering other code and your not required to modify data here
+* You want to trigger something to happen after the commit to the store occurs
 
- The key here is that no matter what, Asynchronous **Middleware** cannot alter
- the data.
+The key here is that no matter what, Asynchronous **Middleware** cannot alter
+the data.
 
 Let's create some **Middleware** that can be turned on or off at anytime and
-lets us record a diff of our Store on each commit.
+lets us record a diff of our Store on each commit.  We can use this to debug
+our application by observing changes to the Store's data.
 
 ```go
 var pConfig = &pretty.Config{
@@ -1459,15 +1464,15 @@ func (l *Logging) DebugLog(args *boutique.MWArgs) (changedData interface{}, stop
 }
 ```
 
-So let's break this down, starting with pConfig.
+So let's break this down, starting with **pConfig**.
 
 I need something to diff the Store, and in this case I've decided to use the
 pretty library by Kyle Lemons. I love this library for diffs and it gives
 a lot of control on how things are diffed.  You can find it here:
 
-"github.com/kylelemons/godebug/pretty"
+http://github.com/kylelemons/godebug/pretty
 
-Next we need to setup our Logger.  If the user starts the server with debug
+Next we need to setup our **Logger**.  If the user starts the server with debug
 logging turned on, we include this in our **Middleware**. If not we don't.
 
 ```go
@@ -1509,9 +1514,9 @@ simply do the:
 args.WG.Done()
 ```
 immediately before the goroutine.  But we need to keep ordering intact for
-proper logging, so we don't want multiple Process() calls to occur.
+proper logging, so we don't want multiple **Process()** calls to occur.
 
-Next, we finally use that args.Committed channel.  
+Next, we finally use that **args.Committed** channel.  
 ```go
 state := <-args.Committed
 ```
@@ -1519,7 +1524,7 @@ This channel will return the committed state right after it is committed to the
 store.  Now we have the data we need to write a diff to a file.
 
 Finally we simply write out the diff of the Store to disk and update our
-.lastData attribute.
+**.lastData** attribute.
 ```go
 _, err := l.file.WriteString(fmt.Sprintf("%s\n\n", pConfig.Compare(l.lastData, state)))
 if err != nil {
