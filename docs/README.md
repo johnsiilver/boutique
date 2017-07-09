@@ -739,156 +739,494 @@ If their subscription request contains comm channel name that doesn't exist,
 we then create one:
 
 ```go
-func (c *ChatterBox) subscribe(conn *websocket.Conn, m messages.Client) (*state.Hub, error) {
-  c.chMu.Lock()
-  defer c.chMu.Unlock()
+// subscribe subscribes a user to the channel.
+func (c *ChatterBox) subscribe(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, m messages.Client) (*state.Hub, error) {
 
-  // Create our new boutique.Store.
-  hub, err := state.New(m.Channel, c.serverID)
-  if err != nil {
-    return nil, err
-  }
+c.chMu.Lock()
+defer c.chMu.Unlock()
 
-  // Let's go ahead and register this user.
-  if err := hub.Perform(actions.AddUser(m.User)) {
-    // Send an error back on the websocket and return.
-  }
+var (
+	hub *state.Hub
+	err error
+)
 
-  // Record in our application the new channel we created.
-  // The lock above is protecting this map. Go 1.8 should have a sync.Map type.
-  c.channels[channelName] = &channel{hub: hub}
-  ...
-  go clientSender(wg, user, m.Channel, conn, hub.store) // Discussed below.
-  go clientReceiver() // Discussed below.
+// See if the channel exists, if so, get it.
+mchan, ok := c.channels[m.Channel]
+if ok {
+	hub = mchan.hub
+	if mchan.users[m.User] { // Don't allow two users with the same name to the same channel.
+		// Send error on websocket and exit.
+		...
+		return nil, err
+	}
+} else {  // Channel doesn't exist, create it.
+	hub, err = state.New(m.Channel)
+	if err != nil {
+		return nil, err
+	}
+	mchan = &channel{ctx: ctx, cancel: cancel, hub: hub, users: map[string]bool{m.User: true}}
+	c.channels[m.Channel] = mchan
+}
+
+// Add the user to the channel.
+mchan.users[m.User] = true
+if err = hub.Store.Perform(actions.AddUser(m.User)); err != nil {
+	return nil, err
+}
+
+// Send  a websocket acknowledgement.
+...
+
+glog.Infof("client %v: subscribed to %s as %s", conn.RemoteAddr(), m.User, m.Channel)
+return hub, nil
 ```
-
 At this point, nothing special has happened.  You've spent a lot more time
 updating a struct, which is not all that useful.
 
-But now is some payoff.  Every time a user on this channel submits a message,
-you want to update the store and have all users updated with that message.
+But now is some payoff.  Every time someone subscribes to the channel, we can
+now update all clients to the new user lists.  We also now have the ability
+to subscribe all listeners to message updates.
+Every time a user on this channel submits a message,
 So for the person who just created the comm channel, lets send him updates
-whenever anyone sends on the channel.
+whenever anyone sends on the channel or joins/leaves the channel.
 
-#### Updating clients when new messages arrive
+#### Updating a client when new messages arrive
 
 ```go
-func (c *ChatterBox) clientSender(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
-  const field = "Messages"
-  // lastMsgID tracks the last ID for a message we have seen. This allows us
-  // to only send messages in the queue we haven't seen before.
-  var lastMsgID = -1
-  if len(startData.Messages) > 0 {
-    lastMsgID = startData.Messages[len(startData.Messages)-1].ID
-  }
+// clientSender receives changes to the store's Messages/Users fields and pushes
+// them out to our websocket clients.
+func (c *ChatterBox) clientSender(ctx context.Context, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
+	const (
+		msgField   = "Messages"
+		usersField = "Users"
+	)
 
-  // lastVersion keeps track of the last version number of the Messages field.
-  // We need this because it is possible for the field to change between
-  // signals.
-  var lastVersion uint64
+	state := store.State()
+	startData := state.Data.(data.State)
 
-  // Subscribe to changes to the "Messages" field in our Store.
-  sigCh, cancel, err := store.Subscribe(field)
-  if err != nil {
-    // Send the error back on the websocket and close
-    ...
-  }
-  defer cancel() // Stop our subscription.
+	// We only want to send messages we haven't seen before.
+	// Cleanup is done in Middleware.
+	var lastMsgID = -1
+	if len(startData.Messages) > 0 {
+		lastMsgID = startData.Messages[len(startData.Messages)-1].ID
+	}
 
-  for sig := range sigCh {
-    // If the Signal's field version is less than what we've already seen, then
-    // just continue the loop.
-    if sig.State.FieldVersions[field] <= lastVersion {
-      continue
-    }
+	// Subscribe to our store's "Messages" field.
+	msgCh, msgCancel, err := store.Subscribe(msgField)
+	if err != nil {
+		c.sendError(conn, err)
+		return
+	}
+	defer msgCancel()  // cancel the subscription when this function ends.
 
-		msgs := sig.State.Data.(data.State).Messages
+	// Subscribe to our store's "Users" field.
+	usersCh, usersCancel, err := store.Subscribe(usersField)
+	if err != nil {
+		c.sendError(conn, err)
+		return
+	}
+	defer usersCancel()
 
-		if len(msgs) == 0 {
+	// Loop looking for messages to come in, users to subscribe/leave or
+	// the context object to be cancelled.
+	for {
+		select {
+		// Our .Messages changed.
+		case msgSig := <-msgCh:
+			msgs := msgSig.State.Data.(data.State).Messages
+			if len(msgs) == 0 { // Don't send blank messages.
+				continue
+			}
+
+			// Send all messages we haven't seen.
+			var toSend []data.Message
+			toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID) // helper method.
+			if len(toSend) > 0 {
+				// This simply sends on the websocket.
+				if err := c.sendMessages(conn, toSend); err != nil {
+					glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+					return
+				}
+			}
+		// Our .Users changed.
+		case userSig := <-usersCh:
+			// Send the message out to this client on a websocket.
+			if err := c.write(conn, messages.Server{Type: messages.SMUserUpdate, Users: userSig.State.Data.(data.State).Users}); err != nil {
+				c.sendError(conn, err)
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+```
+The first thing we need to do is get the existing Store's data and calculate
+the last Message. We only want to send messages after this:
+
+```go
+const (
+	msgField   = "Messages"
+	usersField = "Users"
+)
+
+state := store.State()
+startData := state.Data.(data.State)
+
+// We only want to send messages we haven't seen before.
+// Cleanup is done in Middleware.
+var lastMsgID = -1
+if len(startData.Messages) > 0 {
+	lastMsgID = startData.Messages[len(startData.Messages)-1].ID
+}
+```
+
+Now that we've done that, let's subscribe to the fields we care about:
+```go
+// Subscribe to our store's "Messages" field.
+msgCh, msgCancel, err := store.Subscribe(msgField)
+if err != nil {
+	c.sendError(conn, err)
+	return
+}
+defer msgCancel()  // cancel the subscription when this function ends.
+
+// Subscribe to our store's "Users" field.
+usersCh, usersCancel, err := store.Subscribe(usersField)
+if err != nil {
+	c.sendError(conn, err)
+	return
+}
+defer usersCancel()
+```
+
+Finally, the **for** loop, which reads off our various channels until
+our context is killed.  Each time we receive from the subscription channels,
+we update our client.
+```go
+for {
+	select {
+	// Our .Messages changed.
+	case msgSig := <-msgCh:
+		msgs := msgSig.State.Data.(data.State).Messages
+		if len(msgs) == 0 { // Don't send blank messages.
 			continue
 		}
 
-    // Send any messages that have appeared in the store since we last sent.
-    // Note: This would get ugly if we didn't delete messages after they were
-    // sent, which the application does, but we are not showing that code
-    // here and is done in another method.
+		// Send all messages we haven't seen.
 		var toSend []data.Message
-		toSend, lastMsgID = c.sendThis(msgs, lastMsgID)
-
-    // Send our message to the client via the websocket.
-    ...
+		toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID) // helper method.
+		if len(toSend) > 0 {
+			// This simply sends on the websocket.
+			if err := c.sendMessages(conn, toSend); err != nil {
+				glog.Errorf("error sending message to client on channel %s: %s", chName, err)
+				return
+			}
+		}
+	// Our .Users changed.
+	case userSig := <-usersCh:
+		// Send the message out to this client on a websocket.
+		if err := c.write(conn, messages.Server{Type: messages.SMUserUpdate, Users: userSig.State.Data.(data.State).Users}); err != nil {
+			c.sendError(conn, err)
+			return
+		}
+	case <-ctx.Done():
+		return
 	}
-```
-
-```go
-
-for sig := range sigCh {
-  msgs := sig.State.Data.(data.State).Messages
-  lastVersion = sig.State.FieldVersions[field]
-  if len(msgs) == 0 {
-    continue
-  }
-
-  for {
-    var toSend []data.Message
-    toSend, lastMsgID = c.latestMsgs(msgs, lastMsgID)
-    if len(toSend) > 0 {
-      if err := c.sendMessages(conn, toSend); err != nil {
-        glog.Errorf("error sending message to client on channel %s: %s", chName, err)
-        return
-      }
-    }
-
-    if store.FieldVersion(field) > lastVersion {
-      state = store.State()
-      msgs = state.Data.(data.State).Messages
-      lastVersion = state.FieldVersions[field]
-      continue
-    }
-    break
-  }
 }
 ```
-
-The first thing that happens if we subscribe to the Store's Messages field.
-
-```go
-sigCh, cancel, err := store.Subscribe("Messages")
-```
-
-Here we get back a channel which contains the data.Store that was committed.
-Because we are an immutable data store, it is safe to use this object without
-locking (unless you a mutating, which would be bad).  
-
-cancel() is key, as it tells us to stop receiving updates after we are
-finish listening.
-
-We then begin looping over the channel.
-
-```go
-for sig := range sigCh {
-  ...
-}
-```
-Inside here we need to gather up all messages that have been added since the
-last time we looped and then send them to our client via the websocket.Conn.
 
 #### Update the Store.Messages when a client sends a new Message
 
 ```go
-func (c *ChatterBox) clientReceiver(wg *sync.WaitGroup, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
-  for {
-    // Get a client message from the websocket.Conn
-    ...
+// clientReceiver is used to process messages that are received over the websocket from the client.
+// This is meant to be run in a goroutine as it blocks for the life of the conn and decrements
+// wg when it finally ends.
+func (c *ChatterBox) clientReceiver(ctx context.Context, wg *sync.WaitGroup, conn *websocket.Conn) {
+	defer wg.Done() // Let the caller know we are done.
+	defer c.unsubscribe(user, comm) // When we no longer can talk to the client, unsubscribe.
 
-    if err := store.Perform(actions.SendMessage(usr, m.Text.Text)); err != nil {
-      // Send the error back to the websocket client.
-    }
-  }
+	var (
+		cancel context.CancelFunc
+		hub    *state.Hub
+		user   string
+		comm   string
+	)
+
+	for {
+		m, err := c.read(conn) // Reads from the websocket.
+		if err != nil {
+			glog.Errorf("client %s terminated its connection", conn.RemoteAddr())
+			if cancel != nil {
+				cancel()
+			}
+			return
+		}
+
+		err = m.Validate() // Validate the message.
+		if err != nil {
+			glog.Errorf("error: client %v message did not validate: %v: %#+v: ignoring...", conn.RemoteAddr(), err, m)
+			if err = c.sendError(conn, err); err != nil {
+				return
+			}
+			continue
+		}
+
+		switch t := m.Type; t {
+		case messages.CMSendText:  // User wants to send a message.
+			if hub == nil {
+				if err := c.sendError(conn, fmt.Errorf("cannot send a message, not subscribed to channel")); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+					return
+				}
+			}
+
+			if err := hub.Store.Perform(actions.SendMessage(user, m.Text.Text)); err != nil {
+				c.sendError(conn, fmt.Errorf("problem calling store.Perform(): %s", err))
+				continue
+			}
+		case messages.CMSubscribe: // User wants to subscribe to a channel.
+			ctx, cancel = context.WithCancel(context.Background())
+			defer cancel()
+
+			// If we already are subscribed, unsubscribe.
+			if hub != nil {
+				c.unsubscribe(user, comm)
+				if err := c.write(conn, messages.Server{Type: messages.SMChannelDrop}); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+					return
+				}
+				if cancel != nil {
+					cancel()
+				}
+			}
+
+			// Now subscribe to the new channel.
+			var err error
+			hub, err = c.subscribe(ctx, cancel, conn, m)
+			if err != nil {
+				if err = c.sendError(conn, err); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				}
+				return
+			}
+			user = m.User
+			comm = m.Channel
+
+			go c.clientSender(ctx, user, comm, conn, hub.Store) // Start sending messages to the client.
+		case messages.CMDrop: // User wants to drop from a channel.
+			if hub == nil {
+				if err := c.sendError(conn, fmt.Errorf("error: cannot drop a channel, your not subscribed to any")); err != nil {
+					glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+					return
+				}
+			}
+			if cancel != nil {
+				cancel()
+			}
+			c.unsubscribe(user, comm)
+
+			if err := c.write(conn, messages.Server{Type: messages.SMChannelDrop}); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				return
+			}
+			hub = nil
+			user = ""
+			comm = ""
+		default: // We don't understand the message.
+			glog.Errorf("error: client %v had unknown message %v, ignoring", conn.RemoteAddr(), t)
+			if err := c.sendError(conn, fmt.Errorf("received message type from client %v that the server doesn't understand", t)); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				return
+			}
+		}
+	}
+}
 ```
+So we will take this one section at a time:
+```go
+defer wg.Done() // Let the caller know we are done.
+defer c.unsubscribe(user, comm) // When we no longer can talk to the client, unsubscribe.
+```
+Here, we let our caller know that we are done and unsubscribe from the channel
+when this function ends.  This function ends only when we cannot read/write on
+the websocket.
 
-Now we simply read messages off the websocket.Conn object, update our Store
-with an actions.SendMessage(), and all of our clients are magically updated!
+```go
+var (
+	cancel context.CancelFunc
+	hub    *state.Hub
+	user   string
+	comm   string
+)
+```
+Here we are keeping track of variables that only exist if we are subscribed to
+a channel.  The **cancel()** is for when we want to kill the **clientSender()**.
+**Hub** contains the boutique.Store for this channel's data.  **User** is the
+current user the client is connected as.  Finally, **comm** is the name of the
+channel we are in.
+
+```go
+for {
+	m, err := c.read(conn) // Reads from the websocket.
+	if err != nil {
+		glog.Errorf("client %s terminated its connection", conn.RemoteAddr())
+		if cancel != nil {
+			cancel()
+		}
+		return
+	}
+
+	err = m.Validate() // Validate the message.
+	if err != nil {
+		glog.Errorf("error: client %v message did not validate: %v: %#+v: ignoring...", conn.RemoteAddr(), err, m)
+		if err = c.sendError(conn, err); err != nil {
+			return
+		}
+		continue
+	}
+```
+Now we enter our loop.  We read off the websocket for a messsage. We then
+**Validate()** that message.
+
+```go
+for {
+	...
+	switch t := m.Type; t {
+	case messages.CMSendText:  // User wants to send a message.
+		if hub == nil {
+			if err := c.sendError(conn, fmt.Errorf("cannot send a message, not subscribed to channel")); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				return
+			}
+		}
+
+		if err := hub.Store.Perform(actions.SendMessage(user, m.Text.Text)); err != nil {
+			c.sendError(conn, fmt.Errorf("problem calling store.Perform(): %s", err))
+			continue
+		}
+}
+```
+Next we switch on the message type.  If the message is for sending text on
+the channel, we check if we are in a channel with **if hub == nil**.  If we are,
+we simply call **.Perform(actions.SendMessage(...))**, which will cause all
+other clients to be updated via their subscriptions in **clientSender()**.
+
+```go
+...
+switch t := m.Type; t {
+	...
+	case messages.CMSubscribe: // User wants to subscribe to a channel.
+		ctx, cancel = context.WithCancel(context.Background())
+		defer cancel()
+
+		// If we already are subscribed, unsubscribe.
+		if hub != nil {
+			c.unsubscribe(user, comm)
+			if err := c.write(conn, messages.Server{Type: messages.SMChannelDrop}); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				return
+			}
+			if cancel != nil {
+				cancel()
+			}
+		}
+
+		// Now subscribe to the new channel.
+		var err error
+		hub, err = c.subscribe(ctx, cancel, conn, m)
+		if err != nil {
+			if err = c.sendError(conn, err); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+			}
+			return
+		}
+		user = m.User
+		comm = m.Channel
+
+		go c.clientSender(ctx, user, comm, conn, hub.Store) // Start sending messages to the client.
+```
+Now our next type of message is when the client wants to subscribe to a channel.
+We use a **context** with a **cancelFunc** to let us kill the **clientSender()**
+we create.
+
+If we are already subscribed to a channel, **unsubscribe()**.  
+
+Then we **subscribe()** to the channel, and finally call **clientSender()**.
+
+```go
+...
+switch t := m.Type; t {
+	...
+	case messages.CMDrop: // User wants to drop from a channel.
+		if hub == nil {
+			if err := c.sendError(conn, fmt.Errorf("error: cannot drop a channel, your not subscribed to any")); err != nil {
+				glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+				return
+			}
+		}
+		if cancel != nil {
+			cancel()
+		}
+		c.unsubscribe(user, comm)
+
+		if err := c.write(conn, messages.Server{Type: messages.SMChannelDrop}); err != nil {
+			glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+			return
+		}
+		hub = nil
+		user = ""
+		comm = ""
+```
+This message type signals the user wants to drop from a channel.
+We simply reset our hub/user/comm variables and let the remote side know it
+was successful.
+
+```go
+...
+switch t := m.Type; t {
+	...
+	default: // We don't understand the message.
+		glog.Errorf("error: client %v had unknown message %v, ignoring", conn.RemoteAddr(), t)
+		if err := c.sendError(conn, fmt.Errorf("received message type from client %v that the server doesn't understand", t)); err != nil {
+			glog.Errorf("error: client %v: %s", conn.RemoteAddr(), err)
+			return
+		}
+	}
+} // End function
+```
+Finally, we have our default statement, which is where we inform the client we
+don't know what it is asking us to do.
+
+#### Wrapping up the non-Middleware
+
+There are of course a bunch of helper functions we didn't discuss, but those
+aren't relevant to the discussion.
+
+At this point, we have made a program that:
+* Creates a boutique.Store for each comm channel that exists.
+* Clients in a comm channel are updated of changes via various subscriptions
+that trigger updates to be sent on their connected websockets.
+
+There are other ways to do this of course.  You could create arrays of channels
+that you lock/unlock as you add/remove users.  You could send messages down
+those channels that are then processed and sent via the websocket.
+
+And in some cases, that might be simpler.  But as your program expands, this
+paradigm gets more complicated.  
+
+Maybe you want to:
+* Prevent messages longer than 500 characters.
+* Log all messages to persistent storage.
+* Allow debugging of all changes with users/messages.
+* Add authentication checks on message sends.
+
+Don't get me wrong, you can absolutely do this without Boutique.  You can do
+this more efficiently.  But it takes a lot more thought and planning to get
+right (and probably a lot of refactoring).  Boutique adds structure that can
+make this simplistic.  
+
+Those "Maybe you want to's" above are easily accomplished by adding Middleware.
 
 ### Middleware
 
@@ -907,7 +1245,7 @@ has been committed.
 A few example middleware applications:
 
 * Log all State changes for debug purposes
-* Write certain data changes to storage
+* Write certain data changes to long term storage
 * Authorize/Deny changes
 * Update certain fields in conjunction with the update type
 * Provide cleanup mechanisms for certain fields
@@ -927,7 +1265,7 @@ Let's talk first about the args that are provided:
 type MWArgs struct {
 	// Action is the Action that is being performed.
 	Action Action
-	// NewDate is the proposed new State.Data field in the Store. This can be modified by the
+	// NewData is the proposed new State.Data field in the Store. This can be modified by the
 	// Middleware and returned as the changedData return value.
 	NewData interface{}
 	// GetState if a function that will return the current State of the Store.
