@@ -133,7 +133,7 @@ fmt.Println(s.Data.(State).Users) // The .Users field.
 Key things to note here:
 
 * The State object retrieved from the signal requires no read locks.
-* Perform() calls to do not require manual locks.
+* Perform() calls do not require manual locks.
 * Everything is versioned.
 * Subscribers only receive the **latest** update, not every update.
 This cuts down on unnecessary processing (it is possible, with Middleware
