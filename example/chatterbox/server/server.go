@@ -112,11 +112,13 @@ func (c *ChatterBox) subscribe(ctx context.Context, cancel context.CancelFunc, c
 
 // unsubscribe unsubscribes user "u" from channel "c".
 func (c *ChatterBox) unsubscribe(u string, channel string) {
+	glog.Infof("called unsubsribe")
 	c.chMu.Lock()
 	defer c.chMu.Unlock()
 
 	mchan, ok := c.channels[channel]
 	if !ok {
+		glog.Infof("could not find channel %s", channel)
 		return
 	}
 
@@ -125,6 +127,7 @@ func (c *ChatterBox) unsubscribe(u string, channel string) {
 	if err := mchan.hub.Store.Perform(actions.RemoveUser(u)); err != nil {
 		glog.Errorf("problem removing user from Store: %s", err)
 	}
+	glog.Infof("unsubscribed %s from %s", u, channel)
 }
 
 // clientReceiver is used to process messages that are received over the websocket from the client.
@@ -139,7 +142,6 @@ func (c *ChatterBox) clientReceiver(ctx context.Context, wg *sync.WaitGroup, con
 		user   string
 		comm   string
 	)
-	defer c.unsubscribe(user, comm)
 
 	for {
 		m, err := c.read(conn)
@@ -200,6 +202,7 @@ func (c *ChatterBox) clientReceiver(ctx context.Context, wg *sync.WaitGroup, con
 			}
 			user = m.User
 			comm = m.Channel
+			defer c.unsubscribe(user, comm)
 
 			go c.clientSender(ctx, user, comm, conn, hub.Store)
 		case messages.CMDrop:
