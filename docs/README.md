@@ -232,14 +232,14 @@ our Modifier is designed for.
 First, we transform the **copy** of our State object into its concrete
 state (instead of interface{}).  
 
-Now we check to see if this is an action.Type we handle.  If not, we simply
+Now we check to see if this is an **action.Type** we handle.  If not, we simply
 skip doing anything (which will return the state data as it was before the
 **Modifier** was called).
 
-If it was an ActIncr Action, we increment .Goroutines by action.Update, which
-will be of type int.
+If it was an **ActIncr Action**, we increment **.Goroutines** by
+**action.Update**, which will be of type **int**.
 
-If it was an ActDecr Action, we decrement .Goroutines by 1.
+If it was an **ActDecr Action**, we decrement **.Goroutines** by 1.
 
 ### Let's create a subscriber to print out the current .Gouroutines number
 ```go
