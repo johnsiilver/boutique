@@ -413,9 +413,10 @@ For this example we are going to use the example application ChatterBox included
 with Boutique.  This provides an IRC like service using websockets.  Users
 can access the chat server and subscribe to a channel where they can:
 
- * Send and receive messages on a channel to other users on the channel
- * View who is on a channel
- * Change channels
+ * Send and receive messages on a comm channel to other users on the comm
+ channel
+ * View who is on a comm channel
+ * Change comm channels
 
 We are going to include middleware that:
 
