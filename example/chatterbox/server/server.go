@@ -71,14 +71,9 @@ func (c *ChatterBox) subscribe(ctx context.Context, cancel context.CancelFunc, c
 	if ok {
 		hub = mchan.hub
 		if mchan.users[m.User] {
-			c.write( // Ignore error, because its reporting an error, an error here has nothing to do.
+			c.sendError(
 				conn,
-				messages.Server{
-					Type: messages.SMError,
-					Text: messages.Text{
-						Text: fmt.Sprintf("a user named %s is already in this channel: %s", m.User, m.Channel),
-					},
-				},
+				fmt.Errorf("a user named %s is already in this channel: %s", m.User, m.Channel),
 			)
 			return nil, fmt.Errorf("subscribe erorr")
 		}
@@ -236,7 +231,7 @@ func (c *ChatterBox) clientReceiver(ctx context.Context, wg *sync.WaitGroup, con
 	}
 }
 
-// clientSender receives changes to the store's Messaages field and pushes them out to
+// clientSender receives changes to the store's Messages field and pushes them out to
 // our websocket clients.
 func (c *ChatterBox) clientSender(ctx context.Context, usr string, chName string, conn *websocket.Conn, store *boutique.Store) {
 	const (
