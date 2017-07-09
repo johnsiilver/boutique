@@ -281,8 +281,8 @@ if err != nil {
 }
 defer cancel() // Cancel our subscription when this goroutine ends.
 ```
-Here we subscribe to the .Goroutines field.  Whenever an update happens to this
-field, we will get notified on channel **ch**.  
+Here we subscribe to the **.Goroutines** field.  Whenever an update happens
+to this field, we will get notified on channel **ch**.  
 
 However, we will only get the **latest** update, not every update.
 This is important to remember.
@@ -305,7 +305,8 @@ for {
 ```
 Finally we loop and listen for one of two things to happen:
 
-* We get a **boutique.Signal** that .Goroutines has changed and print the value.
+* We get a **boutique.Signal** that **.Goroutines** has changed and
+print the value.
 * We have been signaled to die, so we kill the printer goroutine by returning.
 
 ### Let's create our main()
