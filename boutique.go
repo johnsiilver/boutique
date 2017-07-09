@@ -304,7 +304,7 @@ type GetState func() State
 type MWArgs struct {
 	// Action is the Action that is being performed.
 	Action Action
-	// NewDate is the proposed new State.Data field in the Store. This can be modified by the
+	// NewData is the proposed new State.Data field in the Store. This can be modified by the
 	// Middleware and returned as the changedData return value.
 	NewData interface{}
 	// GetState if a function that will return the current State of the Store.
