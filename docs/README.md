@@ -6,17 +6,18 @@ Boutique is an immutable state store with subscriptions to field changes.
 
 ## The long summary
 
-Boutique provides a state store for storing immutable data.  This allows data
-retrieved from the store to be used without providing synchronization even as
-changes are made to data in the store by other go-routines.
+Boutique is an experiment in versioned, generic state storage for Go.
+
+It provides a state store for storing immutable data.  This allows data
+retrieved from the store to be used without synchronization.
 
 In addition, Boutique allows subscriptions to be registered for changes to a
 data field or any field changes.  Data is versioned, so you can compare the
 version number between the data retrieved and the last data pulled.
 
 Finally, Boutique supports middleware for any change that is being committed
-to the store.  This allows for sets of features, such as a storage record of
-changes to the store.
+to the store.  This allows for features like debugging, long term storage,
+authorization checks, ... to be created.
 
 ## Best use cases?
 
@@ -103,7 +104,7 @@ if err != nil {
 }
 defer cancel()  // Cancel our subscription when the function closes.
 
-// Print out the user list whenever State.Users changes.
+// Print out the latest user list whenever State.Users changes.
 go func(){
 	for signal := range userNotify {
 		fmt.Println("current users:")
@@ -132,8 +133,8 @@ fmt.Println(s.Data.(State).Users) // The .Users field.
 ```
 Key things to note here:
 
-* The State object retrieved from the signal requires no read locks.
-* Perform() calls do not require manual locks.
+* The State object retrieved from the signal requires no locks.
+* Perform() calls do not require locks.
 * Everything is versioned.
 * Subscribers only receive the **latest** update, not every update.
 This cuts down on unnecessary processing (it is possible, with Middleware
@@ -1536,11 +1537,17 @@ if err != nil {
 l.lastData = state
 ```
 
+## Final thoughts
+
+I hope this has given a decent explanation on what you can do with Boutique.
+In the future, I hope to restructure this into sections with some video
+introductions and guide to testing.
+
+Hopefully you will find this useful.  Happy coding!
 
 ## Previous works
 
 Boutique has its origins from the Redux library: [http://redux.js.org](http://redux.js.org)
 
-Redux is very useful for Javascript clients that need to store state. However,
-while Redux is great, its still Javascript.  Boutique extends the idea for the
-server side with a much strong subscription model for updating listeners.
+Redux is very useful for Javascript clients that need to store state. Its ideas
+were the basis of this model.
