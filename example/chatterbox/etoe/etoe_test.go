@@ -74,7 +74,7 @@ func startClient(user string) (*client.ChatterBox, error) {
 			return nil, fmt.Errorf("could not reach server in < 10 seconds")
 		}
 
-		cli, err = client.New("localhost:6024", user)
+		cli, err = client.New("localhost:6024")
 		if err != nil {
 			glog.Error(err)
 			time.Sleep(1 * time.Second)
@@ -82,7 +82,7 @@ func startClient(user string) (*client.ChatterBox, error) {
 		}
 		break
 	}
-	if _, err = cli.Subscribe("empty"); err != nil {
+	if _, err = cli.Subscribe("empty", user); err != nil {
 		return nil, err
 	}
 	return cli, nil
