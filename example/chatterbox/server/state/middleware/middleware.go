@@ -71,7 +71,7 @@ func (l *Logging) ChannelLog(args *boutique.MWArgs) (changedData interface{}, st
 	}
 
 	go func() {
-		defer args.WG.Done() // Signal when we are done. Not doing this will caused the program to stall.
+		defer args.WG.Done() // Signal when we are done. Not doing this will cause the program to stall.
 		state := <-args.Committed
 		if state.IsZero() { // This indicates that another middleware killed the commit.  No need to log.
 			return
