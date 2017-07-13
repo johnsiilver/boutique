@@ -50,30 +50,29 @@ There are three main drawbacks for using Boutique:
 
 * Boutique writes are slower than a non generic implementation due to type
 assertion, reflection and data copies
-* In very certain circumstances, Boutique can have runtime errors due to using
+* In very specific circumstances, Boutique can have runtime errors due to using
 interface{}
 * Storage updates are done via **Actions**, which adds some complexity
 
 The first, running slower is because we must not only type assert at different
-points, but reflection is used to detect changes in the data fields that are in
-the data being stored.  We also need to copy data out of maps, slices, etc...
-into new maps, slices, etc... This cost is lessened by reads of data
-without synchronization and reduced complexity in the subscription model.
+points, but reflection is used to detect changes in the data fields of the
+stored data.  We also need to copy data out of maps, slices, etc...  into new
+maps, slices, etc... This cost is lessened by reads of data without
+synchronization and reduced complexity in the subscription model.
 
 The second, runtime errors, happen when one of two events occur.  The type of
-data to be stored in Boutique is changed on a write.  The first data passed to
-the store is the only type that can be stored.  Any attempt to store a different
-type of data will result in an error.  The second way is if the data being
-stored in Boutique is not a struct type.  The top level data must be a struct.
-In a non-generic store, these would be caught by the compiler.  But these are
-are generally non-issues.
+data to be stored in Boutique is changed on a write.  The first data type
+passed to the store is the only type that can be stored.  Any attempt to store
+a different type of data will result in an error.  The second way is if the
+data being stored in Boutique is not a struct type.  The top level data must be
+a struct.  In a non-generic store, these would be caught by the compiler.  But
+these are generally non-issues.
 
 The third is more difficult.  Changes are routed through **Actions**.
 **Actions** trigger **Modifers**, which also must be written.  The concepts
 take a bit to understand and you have to be careful not to mutate the data when
-writing **Modifier(s)**.   This adds a certain amount of
-complexity. But once you get used to the method, the code is
-easy to follow.
+writing **Modifier(s)**.   This adds a certain amount of complexity. But once
+you get used to the method, the code is easy to follow.
 
 ## Where are some example applications?
 
@@ -81,9 +80,11 @@ You can find several example applications of varying sophistication here:
 
 IRC like chat server/client using websockets with a sample terminal UI.
 Welcome back to the 70's:
+
 http://github.com/johnsiilver/boutique/example/chatterbox
 
 Stock buy/sell point notifier using desktop notifications:
+
 http://github.com/johnsiilver/boutique/example/notifier
 
 ## What does using Boutique look like?
@@ -94,13 +95,13 @@ Forgetting all the setup, usage looks like this:
 // with a Modifier function called AddUser (for changing field State.User).
 store, err := boutique.New(State{}, boutique.NewModifiers(AddUser), nil)
 if err != nil {
-	// Do something
+	// Handle the error.
 }
 
 // Create a subscription to changes in the "Users" field.
 userNotify, cancel, err := store.Subscribe("Users")
 if err != nil {
-	// Do something
+	// Handle the error.
 }
 defer cancel()  // Cancel our subscription when the function closes.
 
@@ -116,21 +117,22 @@ go func(){
 
 // Change field .Users to contain "Mary".
 if err := store.Perform(AddUser("Mary")); err != nil {
-	// Do something.
+	// Handle the error.
 }
 
 // Change field .Users to contain "Joe".
 if err := store.Perform(AddUser("Joe")); err != nil {
-	// Do something.
+	// Handle the error.
 }
 
 // We can also just grab the state at any time.
 s := store.State()
-fmt.Println(s.Version)  // The current version of the Store.
+fmt.Println(s.Version)                // The current version of the Store.
 fmt.Println(s.FieldVersions["Users"]) // The version of the .Users field.
-fmt.Println(s.Data.(State).Users) // The .Users field.
+fmt.Println(s.Data.(State).Users)     // The .Users field.
 
 ```
+
 Key things to note here:
 
 * The State object retrieved from the signal requires no locks.
@@ -154,8 +156,9 @@ In itself, not practical, but it will help define our concepts.
 ### First, define what data you want to store
 
 To start with, the data to be stored must be of type struct.  Now to be clear,
-this cannot be \*struct, it must be a plain struct.  It is also important to
-note that only public fields can received notification of subscriber changes.
+this cannot be a pointer to struct (\*struct), it must be a plain struct.  It
+is also important to note that only public fields can received notification of
+subscriber changes.
 
 Here's the state we want to store:
 ```go
@@ -169,7 +172,7 @@ type State struct {
 ### Now, we need to define Actions for making changes to the State
 
 ```go
-// These are our ActionTypes.  This inform us of what kind of change we want
+// These are our ActionTypes.  This informs us of what kind of change we want
 // to do with an Action.
 const (
 	// ActIncr indicates we are incrementing the Goroutines field.
@@ -522,7 +525,7 @@ const (
 These are our Action Types that will be used for signaling.  By convention,
 these should be prefixed with "Act" to indicate its an Action type.
 
-We have defined two types here, one that Indicates the Action is trying to
+We have defined two types here, one that indicates the Action is trying to
 send a message via the Store and one that is trying to add a user to the Store.
 
 Now we have our Action creators:
@@ -786,12 +789,12 @@ return hub, nil
 At this point, nothing special has happened.  You've spent a lot more time
 updating a struct, which is not all that useful.
 
-But now is some payoff.  Every time someone subscribes to the channel, we can
-now update all clients to the new user lists.  We also now have the ability
-to subscribe all listeners to message updates.
-Every time a user on this channel submits a message,
-So for the person who just created the comm channel, lets send him updates
-whenever anyone sends on the channel or joins/leaves the channel.
+But here is some payoff.  Every time someone subscribes to the channel, we can
+now update all clients to the new user lists.  We also now have the ability to
+subscribe all listeners to message updates.  Every time a user on this channel
+submits a message, So for the person who just created the comm channel, lets
+send him updates whenever anyone sends on the channel or joins/leaves the
+channel.
 
 #### Updating a client when new messages arrive
 
@@ -1240,8 +1243,8 @@ has been committed.
 
 **Middleware** can:
 
-* Change store data as an update passed through.
-* Deny an update.
+* Change store data as an update passed through
+* Deny an update
 * Signal or spin off other async calls
 * See the end result of the change
 
@@ -1293,7 +1296,7 @@ Altering this has no effect.
 been committed. Altering this by itself will have no effect, but I will show
 how to alter it in a moment and affect a change.
 
-**GetState** is  a function that you can call to get the current **State**
+**GetState** is a function that you can call to get the current **State**
 object.
 
 Let's skip **Committed** for the moment, we'll get back to it later.
@@ -1445,7 +1448,7 @@ func NewLogging(fName string) (*Logging, error) {
 
 func (l *Logging) DebugLog(args *boutique.MWArgs) (changedData interface{}, stop bool, err error) {
 	go func() { // Set off our Asynchronous method.
-		defer args.WG.Done() // Signal when we are done. Not doing this will caused the program to stall.
+		defer args.WG.Done() // Signal when we are done. Not doing this will cause the program to stall.
 
 		state := <-args.Committed // Wait for our data to get committed.
 
