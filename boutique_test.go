@@ -92,6 +92,7 @@ func UpList(state interface{}, action Action) interface{} {
 }
 
 func TestModifier(t *testing.T) {
+	t.Parallel()
 	m := NewModifiers(UpCounter, UpStatus)
 	s := MyState{}
 
@@ -114,6 +115,7 @@ func TestModifier(t *testing.T) {
 }
 
 func TestCopyAndAppendSlice(t *testing.T) {
+	t.Parallel()
 	glog.Infof("TestCopyAndAppendSlice")
 	defer glog.Infof("End TestCopyAndAppendSlice")
 
@@ -184,6 +186,7 @@ func TestCopyAndAppendSlice(t *testing.T) {
 }
 
 func TestFieldsChanged(t *testing.T) {
+	t.Parallel()
 	glog.Infof("TestFieldsChanged")
 	defer glog.Infof("End TestFieldsChanged")
 
@@ -219,18 +222,43 @@ type counters struct {
 }
 
 func TestSubscribe(t *testing.T) {
+	t.Parallel()
 	glog.Infof("TestSubscribe")
 	defer glog.Infof("End TestSubscribe")
 
+	wg := sync.WaitGroup{}
 	glog.Infof("--subscribeSignalsCorrectly")
-	subscribeSignalsCorrectly(t)
-	glog.Infof("--end subscribeSignalsCorrectly")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer glog.Infof("--end subscribeSignalsCorrectly")
+		subscribeSignalsCorrectly(t)
+	}()
 	glog.Infof("--signalsDontBlock")
-	signalsDontBlock(t)
-	glog.Infof("--end signalsDontBlock")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer glog.Infof("--end signalsDontBlock")
+		signalsDontBlock(t)
+	}()
+
+	glog.Infof("--signalsAlwaysLatest")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer glog.Infof("--end signalsAlwaysLatest")
+		signalsAlwaysLatest(t)
+	}()
+
 	glog.Infof("--cancelWorks")
-	cancelWorks(t)
-	glog.Infof("--end cancelWorks")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer glog.Infof("--end cancelWorks")
+		cancelWorks(t)
+	}()
+
+	wg.Wait()
 }
 
 func subscribeSignalsCorrectly(t *testing.T) {
@@ -350,12 +378,49 @@ func signalsDontBlock(t *testing.T) {
 
 	// Remove two items, as there is a buffer of 1.
 	<-ch
-	<-ch
 
 	select {
 	case <-ch:
 		t.Errorf("signalsDontBlock: got <-blocked had something on it, want <-block to block")
 	default:
+	}
+}
+
+func signalsAlwaysLatest(t *testing.T) {
+	initial := MyState{
+		Counter: 0,
+		Status:  "",
+		List:    []string{},
+		Dict:    map[string]bool{},
+	}
+	s, err := New(initial, NewModifiers(UpCounter, UpStatus, UpList), nil)
+	if err != nil {
+		t.Fatalf("signalsAlwaysLatest: %s", err)
+	}
+
+	ch, cancel, err := s.Subscribe("Counter")
+	if err != nil {
+		t.Fatalf("signalsDontBlock: %s", err)
+	}
+
+	wg := sync.WaitGroup{}
+	var got int
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for sig := range ch {
+			got = sig.State.Data.(MyState).Counter
+		}
+	}()
+
+	for i := 0; i < 100000; i++ {
+		s.Perform(IncrCounter())
+	}
+
+	cancel()
+	wg.Wait()
+	if got != s.State().Data.(MyState).Counter {
+		t.Errorf("signalsAlwaysLatest: got %v, want %v", got, s.State().Data.(MyState).Counter)
 	}
 }
 
@@ -437,6 +502,7 @@ func cancelWorks(t *testing.T) {
 }
 
 func TestPerform(t *testing.T) {
+	t.Parallel()
 	initial := MyState{
 		Counter: 0,
 		Status:  "",
@@ -500,6 +566,7 @@ func TestPerform(t *testing.T) {
 }
 
 func TestMiddleware(t *testing.T) {
+	t.Parallel()
 	initial := MyState{
 		Counter: -1,
 	}
@@ -590,53 +657,23 @@ func TestMiddleware(t *testing.T) {
 }
 
 func TestSignaler(t *testing.T) {
-	glog.Infof("TestSignaler")
-	sig := newsignaler()
-	ch := sig.ch()
+	t.Parallel()
+	s := newSignaler()
 
-	sig.insert(Signal{Version: 0})
-	sig.insert(Signal{Version: 1})
-	sig.insert(Signal{Version: 2})
-	sig.insert(Signal{Version: 3})
+	for i := 0; i <= 100000; i++ {
+		s.insert(Signal{Version: uint64(i)})
+		if i%10000 == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	s.close()
 
-	v := <-ch
-	if v.Version != 0 {
-		t.Fatalf("TestSignaler: got .Version %d, want %d", v.Version, 0)
+	var v uint64
+	for sig := range s.ch {
+		v = sig.Version
 	}
 
-	v = <-ch
-	if v.Version != 3 {
-		t.Fatalf("TestSignaler: got .Version %d, want %d", v.Version, 3)
+	if v != 100000 {
+		t.Errorf("TestSignaler: got %v, want %v", v, 100000)
 	}
-
-	select {
-	case v := <-ch:
-		t.Fatalf("TestSignaler: got <-ch returned instead of it blocking: %+v", v)
-	case <-time.After(1 * time.Second):
-	}
-
-	sig.insert(Signal{Version: 3})
-
-	select {
-	case <-ch:
-	case <-time.After(1 * time.Second):
-		t.Errorf("TestSignaler: got blocked on <-ch, expected returned value")
-	}
-
-	// To help detect syncromization problems under the race detector.
-	wg := &sync.WaitGroup{}
-	for i := 0; i < 1000; i++ {
-		i := i
-
-		// TODO(jdoak): Something wrong here.
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sig.insert(Signal{Version: uint64(i)})
-		}()
-		go func() {
-			<-ch
-		}()
-	}
-	wg.Wait()
 }

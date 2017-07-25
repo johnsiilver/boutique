@@ -110,128 +110,98 @@ func (s Signal) FieldChanged(f string) bool {
 }
 
 // signaler provides a way to extract the latest Signal from a Store.Subscription.
-// It is similar to channel semantics using Get() instead of <-.  If Get()
-// returns a false, then the signaler is closed and there are no more Signals
-// queued. Even if the signaler is closed, Get() will return a (Signal, true) if
-// there are still Signals in the queue, just like a channel.
-// signaler is used instead of a channel to allow receiving only the last state
-// changes.
+// Simply listen on ch to get updates.
 type signaler struct {
-	done     chan struct{}
-	mu       sync.Mutex
-	signal   chan Signal
-	insertCh chan Signal
+	ch chan Signal
+	// mu protects everything below.
+	mu     sync.Mutex
+	latest *Signal
+	done   chan struct{}
 }
 
-func newsignaler() *signaler {
-	return &signaler{
-		done:     make(chan struct{}),
-		signal:   make(chan Signal, 1),
-		insertCh: make(chan Signal),
+func newSignaler() *signaler {
+	s := &signaler{
+		ch:   make(chan Signal),
+		done: make(chan struct{}),
 	}
+	s.handler()
+	return s
 }
 
-// ch returns a chan Signal that will recieve Signals whenver a subscriber is
-// updated.
-func (s *signaler) ch() chan Signal {
-	ch := make(chan Signal, 1)
-
+func (s *signaler) handler() {
 	go func() {
-		defer close(ch)
-
-		// oldValue holds a value that is gotten by .get() but could not be
-		// inserted on ch.
-		var oldValue *Signal
+		defer close(s.ch)
 
 		for {
-			// Attempt to get a Signal within a timeout.
-			v, ok, timeout := s.get(1 * time.Millisecond)
-
-			switch {
-			// signaler.close() was called.
-			case !ok:
+			switch s.sendSleepReturn() {
+			case sleep:
+				time.Sleep(1 * time.Millisecond)
+			case loop:
+			case closed:
 				return
-			// .get()'s timeout was reached.
-			case timeout:
-				// If we have an oldValue that we tried to send on ch, but was blocked,
-				// try again because it is still valid.
-				if oldValue != nil {
-					select {
-					case ch <- *oldValue:
-						oldValue = nil
-					default:
-					}
-				}
-			// We got a new value.
-			default:
-				select {
-				// Try to put in on ch. If we can, delete oldValue, as it is not valid.
-				case ch <- v:
-					oldValue = nil
-				// There was no room on ch, so store this value and try again if something
-				// newer hasn't come along.
-				default:
-					oldValue = &v
-				}
 			}
 		}
 	}()
-	return ch
 }
 
-// Get returns a Signal and a bool.  If the bool is false, then the signaler
-// has been closed and has no more entries, the Signal will be the zero value.
-// Otherwise it will contain the latest Signal.
-func (s *signaler) get(timeout time.Duration) (signal Signal, ok bool, timedout bool) {
+const (
+	loop   = 0
+	closed = 1
+	sleep  = 2
+)
+
+// sendSleepReturn sends on ch if we have a new Signal, returns sleep if we
+// can't send the signal or there is no signal to send, and returns closed
+// if the signaler is has had close() called.
+func (s *signaler) sendSleepReturn() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-top:
-	// Return a signal if there is one or take in a signal someone wants inserted.
-	select {
-	// signaler has been closed, but if there is still a Signal left, send it.
-	// If not, let the user know.
-	case <-s.done:
+	sig := s.latest
+	if sig != nil {
 		select {
-		case sig := <-s.signal:
-			return sig, true, false
+		case s.ch <- *sig:
+			s.latest = nil
+			return loop
 		default:
-			return Signal{}, false, false
-		}
-	case <-time.After(timeout):
-		return Signal{}, true, true
-	// We have a signal to give them, so give it to them.
-	case sig := <-s.signal:
-		return sig, true, false
-	// They want to insert a new signal.
-	case i := <-s.insertCh:
-		select {
-		// There is room, put it in.
-		case s.signal <- i:
-			goto top
-		// There isn't room, remove the older Signal and put the new one in.
-		default:
-			_ = <-s.signal
-			s.signal <- i
-			goto top
+			return sleep
 		}
 	}
-	panic("should never get here")
+
+	if s.isClosed() {
+		return closed
+	}
+	return sleep
+}
+
+func (s *signaler) isClosed() bool {
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // close closes the signaler.
 func (s *signaler) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	close(s.done)
 }
 
 // insert puts a new Signal out.  This is not thread safe.
 func (s *signaler) insert(sig Signal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	select {
 	case <-s.done:
 		panic("inserting on closed signaler")
 	default:
-		s.insertCh <- sig
 	}
+	s.latest = &sig
 }
 
 // ActionType indicates what type of Action this is.
@@ -627,7 +597,7 @@ func (s *Store) write(sc stateChange, opts *performOptions) State {
 	defer s.smu.RUnlock()
 
 	if len(s.subscribers) > 0 {
-		go s.cast(sc, state, opts)
+		s.cast(sc, state, opts)
 	}
 	return state
 }
@@ -651,7 +621,7 @@ func (s *Store) Subscribe(field string) (chan Signal, CancelFunc, error) {
 		return nil, nil, fmt.Errorf("cannot subscribe to non-existing field: %s", field)
 	}
 
-	sig := newsignaler()
+	sig := newSignaler()
 
 	s.smu.Lock()
 	defer s.smu.Unlock()
@@ -664,7 +634,7 @@ func (s *Store) Subscribe(field string) (chan Signal, CancelFunc, error) {
 			{id: s.sid, sig: sig},
 		}
 	}
-	return sig.ch(), cancelFunc(s, field, s.sid), nil
+	return sig.ch, cancelFunc(s, field, s.sid), nil
 }
 
 // State returns the current stored state.
@@ -688,22 +658,19 @@ func (s *Store) cast(sc stateChange, state State, opts *performOptions) {
 	s.smu.RLock()
 	defer s.smu.RUnlock()
 
-	wg := &sync.WaitGroup{}
 	for _, field := range sc.changed {
 		if v, ok := s.subscribers[field]; ok {
 			for _, sub := range v {
-				wg.Add(1)
-				go signal(Signal{Version: sc.newFieldVersions[field], State: state, Fields: []string{field}}, sub.sig, wg, opts)
+				sig := Signal{Version: sc.newFieldVersions[field], State: state, Fields: []string{field}}
+				sub.sig.insert(sig)
 			}
 		}
 	}
 
 	for _, sub := range s.subscribers["any"] {
-		wg.Add(1)
-		go signal(Signal{Version: sc.newVersion, State: state, Fields: sc.changed}, sub.sig, wg, opts)
+		sub.sig.insert(Signal{Version: sc.newVersion, State: state, Fields: sc.changed})
 	}
 
-	wg.Wait()
 	if opts.subscribe != nil {
 		select {
 		case opts.subscribe <- state:
@@ -714,7 +681,7 @@ func (s *Store) cast(sc stateChange, state State, opts *performOptions) {
 	}
 }
 
-// signal sends a Signa on a Signler.
+// signal sends a Signal on a Signler.
 func signal(sig Signal, signaler *signaler, wg *sync.WaitGroup, opts *performOptions) {
 	defer wg.Done()
 
