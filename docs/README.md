@@ -81,11 +81,13 @@ You can find several example applications of varying sophistication here:
 IRC like chat server/client using websockets with a sample terminal UI.
 Welcome back to the 70's:
 
-http://github.com/johnsiilver/boutique/example/chatterbox
+
+
+[http://github.com/johnsiilver/boutique/example/chatterbox](http://github.com/johnsiilver/boutique/blob/master/example/chatterbox/chatterbox.go)
 
 Stock buy/sell point notifier using desktop notifications:
 
-http://github.com/johnsiilver/boutique/example/notifier
+[http://github.com/johnsiilver/boutique/example/notifier](http://github.com/johnsiilver/boutique/blob/master/example/notifier/notifier.go)
 
 ## What does using Boutique look like?
 
@@ -146,7 +148,7 @@ Middleware.
 
 ## Start simply: the basics
 
-http://github.com/johnsiilver/boutique/example/basic
+[http://github.com/johnsiilver/boutique/example/basic](http://github.com/johnsiilver/boutique/blob/master/example/basic/basic.go)
 
 This application simply spins up a bunch of goroutines and we use a
 boutique.Store to track the number of goroutines running.
