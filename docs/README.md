@@ -81,8 +81,6 @@ You can find several example applications of varying sophistication here:
 IRC like chat server/client using websockets with a sample terminal UI.
 Welcome back to the 70's:
 
-
-
 [http://github.com/johnsiilver/boutique/example/chatterbox](http://github.com/johnsiilver/boutique/blob/master/example/chatterbox/chatterbox.go)
 
 Stock buy/sell point notifier using desktop notifications:
